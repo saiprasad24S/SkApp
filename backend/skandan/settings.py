@@ -1,0 +1,314 @@
+import os
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ[key.strip()] = value.strip().strip('"').strip("'")
+
+
+_load_env_file(BASE_DIR / ".env")
+_load_env_file(BASE_DIR.parent / ".env")
+
+
+def _env(name: str, default: str = "") -> str:
+    return os.getenv(name, default)
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int = 0) -> int:
+    value = os.getenv(name)
+    return int(value) if value is not None and value != "" else default
+
+
+def _is_placeholder(value: str) -> bool:
+    return not value or value.strip().lower() in {"replace-me", "replace-with-aiven-password", "your-aiven-host.aivencloud.com", "changeme"}
+
+
+def _database_config(url: str) -> dict:
+    if not url:
+        raise ValueError("DATABASE_URL is not configured. Set a MySQL/Aiven DATABASE_URL or populate DB_* settings.")
+    if url.startswith("sqlite:///"):
+        raise ValueError("SQLite is not supported for this project. Configure MySQL/Aiven instead.")
+    parsed = urlparse(url)
+    if parsed.scheme != "mysql":
+        raise ValueError("DATABASE_URL must use mysql://")
+
+    query = parse_qs(parsed.query)
+    options = {"charset": "utf8mb4"}
+    ssl_mode = query.get("ssl-mode", [None])[0]
+    ssl_ca = query.get("ssl-ca", [None])[0]
+    if ssl_mode:
+        options["ssl"] = {"ssl-mode": ssl_mode}
+        if ssl_ca:
+            options["ssl"]["ca"] = ssl_ca
+
+    return {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": parsed.path.lstrip("/"),
+        "USER": parsed.username or "",
+        "PASSWORD": parsed.password or "",
+        "HOST": parsed.hostname or "localhost",
+        "PORT": parsed.port or 3306,
+        "OPTIONS": options,
+    }
+
+
+SECRET_KEY = _env("SECRET_KEY", default="replace-me")
+DEBUG = _env_bool("DEBUG", default=False)
+ALLOWED_HOSTS = [host.strip() for host in _env("ALLOWED_HOSTS", default="*").split(",") if host.strip()]
+if "*" not in ALLOWED_HOSTS:
+    for default_host in [".vercel.app", "localhost", "127.0.0.1"]:
+        if default_host not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(default_host)
+
+INSTALLED_APPS = [
+    "daphne",
+    "channels",
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "corsheaders",
+    "rest_framework",
+    "django_filters",
+    "cloudinary",
+    "cloudinary_storage",
+    "skandan",
+    "apps.accounts",
+    "apps.assignments",
+    "apps.attendance",
+    "apps.tracking",
+    "apps.vision",
+    "apps.analytics",
+    "apps.invoices",
+    "apps.payslips",
+    "apps.leaves",
+    "apps.communication",
+]
+
+MIDDLEWARE = [
+    "django.middleware.gzip.GZipMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+
+ROOT_URLCONF = "skandan.urls"
+WSGI_APPLICATION = "skandan.wsgi.application"
+ASGI_APPLICATION = "skandan.asgi.application"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+            ],
+        },
+    }
+]
+
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "Asia/Kolkata"
+USE_I18N = True
+USE_TZ = True
+
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = Path(_env("MEDIA_ROOT", default=str(BASE_DIR / "media")))
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+DB_ENGINE = _env("DB_ENGINE", default="mysql")
+DB_NAME = _env("DB_NAME", default="")
+DB_USER = _env("DB_USER", default="")
+DB_PASSWORD = _env("DB_PASSWORD", default="")
+DB_HOST = _env("DB_HOST", default="")
+DB_PORT = _env_int("DB_PORT", default=3306)
+DB_SSL_MODE = _env("DB_SSL_MODE", default="REQUIRED")
+DB_SSL_CA = _env("DB_SSL_CA", default="")
+DB_SSL_VERIFY_CERT = _env_bool("DB_SSL_VERIFY_CERT", default=True)
+
+use_env_db = (
+    not _is_placeholder(DB_NAME)
+    and not _is_placeholder(DB_USER)
+    and not _is_placeholder(DB_PASSWORD)
+    and not _is_placeholder(DB_HOST)
+)
+
+if use_env_db:
+    normalized_db_engine = (DB_ENGINE or "django.db.backends.mysql").strip().lower()
+    if normalized_db_engine == "mysql":
+        normalized_db_engine = "django.db.backends.mysql"
+    db_options = {"charset": "utf8mb4", "init_command": "SET sql_mode='STRICT_TRANS_TABLES'"}
+    if DB_SSL_MODE:
+        ssl_config = {"ssl-mode": DB_SSL_MODE}
+        if DB_SSL_CA:
+            ssl_config["ca"] = DB_SSL_CA
+        if not DB_SSL_VERIFY_CERT:
+            ssl_config["ssl-verify-server-cert"] = False
+        db_options["ssl"] = ssl_config
+    DATABASES = {
+        "default": {
+            "ENGINE": normalized_db_engine,
+            "NAME": DB_NAME,
+            "USER": DB_USER,
+            "PASSWORD": DB_PASSWORD,
+            "HOST": DB_HOST,
+            "PORT": DB_PORT,
+            "OPTIONS": db_options,
+            "CONN_MAX_AGE": 600,
+        }
+    }
+    DB_CONFIG_SOURCE = "env"
+else:
+    db_url_val = _env("DATABASE_URL", default="")
+    if db_url_val:
+        DATABASES = {"default": _database_config(db_url_val)}
+        DB_CONFIG_SOURCE = "DATABASE_URL"
+    else:
+        DATABASES = {"default": {}}
+        DB_CONFIG_SOURCE = "none"
+
+logger.info("Database configuration source: %s", DB_CONFIG_SOURCE)
+
+from corsheaders.defaults import default_headers, default_methods
+
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [origin.strip() for origin in _env("CORS_ALLOWED_ORIGINS", default="").split(",") if origin.strip()]
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https?://.*$",
+]
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "authorization",
+    "x-csrftoken",
+    "x-requested-with",
+]
+CORS_ALLOW_METHODS = list(default_methods) + [
+    "DELETE",
+    "GET",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "apps.accounts.authentication.ClerkJWTAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 25,
+}
+
+CLOUDINARY_CLOUD_NAME = _env("CLOUDINARY_CLOUD_NAME", default="")
+CLOUDINARY_API_KEY = _env("CLOUDINARY_API_KEY", default="")
+CLOUDINARY_API_SECRET = _env("CLOUDINARY_API_SECRET", default="")
+CLOUDINARY_STORAGE = {
+    "CLOUD_NAME": CLOUDINARY_CLOUD_NAME,
+    "API_KEY": CLOUDINARY_API_KEY,
+    "API_SECRET": CLOUDINARY_API_SECRET,
+}
+CLOUDINARY_URL = _env("CLOUDINARY_URL", default="")
+CLOUDINARY_SECURE = _env_bool("CLOUDINARY_SECURE", default=True)
+CLOUDINARY_FOLDER = _env("CLOUDINARY_FOLDER", default="skandan")
+CLOUDINARY_MAX_SIZE = _env_int("CLOUDINARY_MAX_SIZE", default=10 * 1024 * 1024)
+CLOUDINARY_ALLOWED_FORMATS = [fmt.strip() for fmt in _env("CLOUDINARY_ALLOWED_FORMATS", default="jpg,jpeg,png,webp").split(",") if fmt.strip()]
+
+DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
+AZURE_FACE_ENDPOINT = _env("AZURE_FACE_ENDPOINT", default="")
+AZURE_FACE_KEY = _env("AZURE_FACE_KEY", default="")
+AZURE_FACE_PERSON_GROUP_ID = _env("AZURE_FACE_PERSON_GROUP_ID", default="employeehub-face-group")
+
+CLERK_SECRET_KEY = _env("CLERK_SECRET_KEY", default="")
+CLERK_JWKS_URL = _env("CLERK_JWKS_URL", default="https://noble-vervet-62.clerk.accounts.dev/.well-known/jwks.json")
+CLERK_ISSUER = _env("CLERK_ISSUER", default="")
+CLERK_AUDIENCE = _env("CLERK_AUDIENCE", default="skandan-backend")
+DEFAULT_GEOFENCE_RADIUS_METERS = _env_int("DEFAULT_GEOFENCE_RADIUS_METERS", default=100)
+
+EMAIL_BACKEND = _env("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = _env("EMAIL_HOST", default="smtp.gmail.com")
+EMAIL_PORT = _env_int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS = _env_bool("EMAIL_USE_TLS", default=True)
+EMAIL_HOST_USER = _env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = _env("EMAIL_HOST_PASSWORD", default="")
+DEFAULT_FROM_EMAIL = _env("DEFAULT_FROM_EMAIL", default="Skandan EmployeeHub <skandanhomecarre@gmail.com>")
+
+CELERY_BROKER_URL = _env("REDIS_URL", default="redis://127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+
+redis_host = _env("REDIS_URL", default="redis://127.0.0.1:6379/0")
+is_serverless = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+if is_serverless and ("127.0.0.1" in redis_host or "localhost" in redis_host):
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [redis_host],
+            },
+        },
+    }
+
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {"format": "{asctime} {levelname} {name} {message}", "style": "{"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+}
