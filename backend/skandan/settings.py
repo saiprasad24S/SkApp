@@ -284,7 +284,9 @@ CELERY_RESULT_SERIALIZER = "json"
 
 redis_host = _env("REDIS_URL", default="redis://127.0.0.1:6379/0")
 is_serverless = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
-if is_serverless and ("127.0.0.1" in redis_host or "localhost" in redis_host):
+use_in_memory_channel = _env_bool("CHANNELS_IN_MEMORY", default=False)
+
+if (is_serverless and ("127.0.0.1" in redis_host or "localhost" in redis_host)) or use_in_memory_channel:
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels.layers.InMemoryChannelLayer",

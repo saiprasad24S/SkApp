@@ -11,6 +11,7 @@ import { loginToBackend } from '../src/lib/auth';
 import { theme } from '../src/theme';
 import ErrorBoundary from '../src/components/ErrorBoundary';
 import NetworkBanner from '../src/components/NetworkBanner';
+import { registerForPushNotificationsAsync, setupPushTokenListener } from '../src/lib/notifications';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -75,6 +76,12 @@ function InitialLayout() {
           if (token) {
             const response = await loginToBackend(token);
             setAuth(response);
+
+            // Register device push token non-blockingly in the background
+            registerForPushNotificationsAsync(token, response.employee?.id).catch(() => {
+              // Non-blocking, handled internally
+            });
+
             if (inAuthGroup || (segments as string[]).length === 0) {
               router.replace('/(employee)/home');
             }
@@ -102,6 +109,16 @@ function InitialLayout() {
 
     initAuth();
   }, [isLoaded, isSignedIn]);
+
+  // Listen for device push token rotation while the employee session is active
+  useEffect(() => {
+    if (!isSignedIn) return;
+
+    const sub = setupPushTokenListener(getToken, () => useAuthStore.getState().profile?.id);
+    return () => {
+      sub.remove();
+    };
+  }, [isSignedIn, getToken]);
 
   if (isInitializing || !isLoaded) {
     return (

@@ -6,9 +6,10 @@ export interface LoginResponse {
   employee?: EmployeeProfile;
   session_is_active?: boolean;
   requires_face_registration?: boolean;
-  active_session?: {
-    login_time: string;
-    duration_seconds: number;
+  active_session?: boolean;
+  session_summary?: {
+    active_session?: boolean;
+    [key: string]: unknown;
   };
 }
 

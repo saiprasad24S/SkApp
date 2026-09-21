@@ -22,7 +22,7 @@ interface AuthState {
   profile: EmployeeProfile | null;
   isSessionActive: boolean;
   requiresFaceRegistration: boolean;
-  activeSession: { login_time: string; duration_seconds: number } | null;
+  activeSession: { active_session?: boolean; [key: string]: unknown } | null;
   isLoading: boolean;
   isOnline: boolean;
   
@@ -50,9 +50,12 @@ export const useAuthStore = create<AuthState>()(
         role: response.role,
         employeeId: response.employee?.employee_id || null,
         profile: response.employee || null,
-        isSessionActive: !!response.session_is_active,
+        isSessionActive: !!(
+          response.active_session ||
+          response.session_summary?.active_session
+        ),
         requiresFaceRegistration: !!response.requires_face_registration,
-        activeSession: response.active_session || null,
+        activeSession: response.session_summary || null,
       })),
       setSessionActive: (isActive) => set({ isSessionActive: isActive }),
       setOnline: (isOnline) => set({ isOnline }),

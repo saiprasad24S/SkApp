@@ -58,9 +58,12 @@ mobile/.env.production
 *.ipa
 
 # Firebase
-mobile/google-services.json
+# Note: mobile/google-services.json contains client-side app identifiers and is tracked for EAS Android builds
 mobile/GoogleService-Info.plist
 
 # EAS / Play Store
 mobile/play-store-key.json
 mobile/eas-credentials/
+
+# Scratch & temporary test artifacts
+scratch/

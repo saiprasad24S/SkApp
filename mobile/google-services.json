@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "672804501887",
+    "project_id": "skandan-employeehub",
+    "storage_bucket": "skandan-employeehub.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:672804501887:android:13cbc81f776881a16a824a",
+        "android_client_info": {
+          "package_name": "com.skandan.portal"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD5F97TzCi1FI1ccO0i5INsOIYnj-pVHMA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
