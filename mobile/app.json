@@ -84,7 +84,8 @@
           "cameraPermissionText": "Camera is required for face verification during attendance",
           "enableCodeScanner": false
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
