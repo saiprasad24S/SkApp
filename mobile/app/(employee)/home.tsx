@@ -72,7 +72,7 @@ export default function HomeScreen() {
       {/* Top Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Skandan Portal</Text>
+          <Text style={styles.headerTitle}>SkandanHomecarre</Text>
           <Text style={styles.headerSub}>Skandan Home Carre Clinic</Text>
         </View>
         <View style={styles.headerIcons}>

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, Image } from 'react-native';
 import { TextInput, Button, Text, Snackbar, ActivityIndicator } from 'react-native-paper';
 import { Link, useRouter } from 'expo-router';
 import { useSignIn } from '@clerk/clerk-expo';
@@ -84,7 +84,10 @@ export default function SignInScreen() {
       <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.header}>
-            <Text style={styles.title}>Skandan Portal</Text>
+            <View style={styles.logoBadge}>
+              <Image source={require('../../assets/icon.png')} style={styles.logoImage} resizeMode="contain" />
+            </View>
+            <Text style={styles.title}>SkandanHomecarre</Text>
             <Text style={styles.subtitle}>Reset Password</Text>
           </View>
           <View style={styles.form}>
@@ -112,7 +115,10 @@ export default function SignInScreen() {
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-          <Text style={styles.title}>Skandan Portal</Text>
+          <View style={styles.logoBadge}>
+            <Image source={require('../../assets/icon.png')} style={styles.logoImage} resizeMode="contain" />
+          </View>
+          <Text style={styles.title}>SkandanHomecarre</Text>
           <Text style={styles.subtitle}>Employee Portal</Text>
         </View>
 
@@ -200,17 +206,35 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: '#6B2FA0',
-    padding: 40,
-    paddingTop: 80,
+    padding: 32,
+    paddingTop: 64,
     alignItems: 'center',
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
   },
+  logoBadge: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+  },
+  logoImage: {
+    width: 64,
+    height: 64,
+  },
   title: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 'bold',
     color: '#FFFFFF',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
     fontSize: 16,

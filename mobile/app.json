@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Skandan Portal",
+    "name": "SkandanHomecarre",
     "slug": "skandan-portal",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -11,7 +11,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#6B2FA0"
+      "backgroundColor": "#FFFFFF"
     },
     "ios": {
       "supportsTablet": true,
@@ -77,7 +77,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Skandan Portal to access your photos for sharing in chat"
+          "photosPermission": "Allow SkandanHomecarre to access your photos for sharing in chat"
         }
       ],
       [
