@@ -157,7 +157,9 @@ class ConversationListSerializer(serializers.ModelSerializer):
         return EmployeeSearchSerializer(other_emp).data
 
     def get_last_message(self, obj: Conversation) -> dict | None:
-        if hasattr(obj, "_prefetched_objects_cache") and "messages" in obj._prefetched_objects_cache:
+        if hasattr(obj, "_cached_last_message"):
+            msg = obj._cached_last_message
+        elif hasattr(obj, "_prefetched_objects_cache") and "messages" in obj._prefetched_objects_cache:
             all_msgs = list(obj.messages.all())
             msg = all_msgs[-1] if all_msgs else None
         else:
@@ -177,6 +179,8 @@ class ConversationListSerializer(serializers.ModelSerializer):
         }
 
     def get_unread_count(self, obj: Conversation) -> int:
+        if hasattr(obj, "_cached_unread_count"):
+            return obj._cached_unread_count
         current_employee = self.context.get("current_employee")
         if not current_employee:
             return 0

@@ -3,7 +3,10 @@ import { View, Text, TouchableOpacity, StyleSheet, BackHandler, Platform } from 
 import { Tabs, useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { useAuth } from '@clerk/clerk-expo';
+import { useQuery } from '@tanstack/react-query';
 import { useChatStore } from '../../src/store/chatStore';
+import { getConversations } from '../../src/api/chatApi';
 
 function PortalBottomNav({ state, descriptors, navigation }: any) {
   const insets = useSafeAreaInsets();
@@ -83,6 +86,22 @@ function PortalBottomNav({ state, descriptors, navigation }: any) {
 export default function EmployeeLayout() {
   const router = useRouter();
   const pathname = usePathname();
+  const { getToken } = useAuth();
+  const setUnreadCount = useChatStore((s: any) => s.setUnreadCount);
+
+  // Poll conversations for badge updates across the portal
+  useQuery({
+    queryKey: ['chat-conversations-badge'],
+    queryFn: async () => {
+      const token = await getToken();
+      if (!token) return [];
+      const convs = await getConversations(token);
+      const totalUnread = convs.reduce((acc: number, c: any) => acc + (c.unread_count || 0), 0);
+      setUnreadCount(totalUnread);
+      return convs;
+    },
+    refetchInterval: 15000,
+  });
 
   useEffect(() => {
     const onBackPress = () => {

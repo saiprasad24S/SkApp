@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, OuterRef, Subquery
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -137,14 +137,47 @@ class ConversationListCreateView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        conversations = (
+        last_msg_id = Subquery(
+            Message.objects.filter(conversation=OuterRef("pk"))
+            .order_by("-created_at")
+            .values("id")[:1]
+        )
+
+        conversations = list(
             Conversation.objects.filter(members__employee=current_employee)
-            .prefetch_related(
-                "members__employee__presence",
-                "messages__sender",
-            )
+            .annotate(last_msg_id=last_msg_id)
+            .prefetch_related("members__employee__presence")
             .order_by("-updated_at")
         )
+
+        last_msg_ids = [c.last_msg_id for c in conversations if c.last_msg_id]
+        last_messages_map = {}
+        if last_msg_ids:
+            last_messages_map = {
+                m.id: m for m in Message.objects.filter(id__in=last_msg_ids).select_related("sender")
+            }
+
+        members_dict = {}
+        for c in conversations:
+            for m in c.members.all():
+                if m.employee_id == current_employee.id:
+                    members_dict[c.id] = m.last_read_at
+
+        unread_counts = {}
+        if conversations:
+            unread_qs = Message.objects.filter(
+                conversation__in=conversations,
+                read_at__isnull=True,
+            ).exclude(sender=current_employee).values("conversation_id", "created_at")
+            for u in unread_qs:
+                cid = u["conversation_id"]
+                lr = members_dict.get(cid)
+                if not lr or u["created_at"] > lr:
+                    unread_counts[cid] = unread_counts.get(cid, 0) + 1
+
+        for c in conversations:
+            c._cached_last_message = last_messages_map.get(c.last_msg_id)
+            c._cached_unread_count = unread_counts.get(c.id, 0)
 
         serializer = ConversationListSerializer(
             conversations,
