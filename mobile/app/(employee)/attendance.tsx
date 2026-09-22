@@ -1,41 +1,143 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, memo, useCallback } from 'react';
 import {
   StyleSheet,
   View,
-  ScrollView,
+  Text,
   TouchableOpacity,
+  ScrollView,
   RefreshControl,
+  ActivityIndicator,
   Dimensions,
 } from 'react-native';
-import { Text, Card, IconButton, ActivityIndicator } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@clerk/clerk-expo';
+import Svg, { Circle } from 'react-native-svg';
+import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
-import { getMonthlyAttendance } from '../../src/api/attendanceApi';
-import { MonthlyAttendanceDay } from '../../src/types/employee';
+import { getAttendanceHistory } from '../../src/api/attendanceApi';
 
-const { width } = Dimensions.get('window');
-const CELL_SIZE = (width - 48) / 7;
+const AttendanceMiniPieChart = memo(function AttendanceMiniPieChart({
+  present,
+  absent,
+  size = 64,
+}: {
+  present: number;
+  absent: number;
+  size?: number;
+}) {
+  const total = present + absent;
+  const radius = 14;
+  const circumference = 2 * Math.PI * radius; // ~87.96
+
+  if (total === 0) {
+    return (
+      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+        <Svg width={size} height={size} viewBox="0 0 36 36">
+          <Circle cx="18" cy="18" r={radius} fill="none" stroke="#E2E8F0" strokeWidth="5" />
+        </Svg>
+        <Text style={{ position: 'absolute', fontSize: 10, fontWeight: '700', color: '#9ca3af' }}>0%</Text>
+      </View>
+    );
+  }
+
+  const presentRatio = present / total;
+  const presentStroke = presentRatio * circumference;
+  const presentPercent = Math.round(presentRatio * 100);
+
+  return (
+    <View
+      style={{
+        position: 'relative',
+        width: size,
+        height: size,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Svg
+        width={size}
+        height={size}
+        viewBox="0 0 36 36"
+        style={{ transform: [{ rotate: '-90deg' }] }}
+      >
+        <Circle
+          cx="18"
+          cy="18"
+          r={radius}
+          fill="none"
+          stroke="#EF4444"
+          strokeWidth="5"
+        />
+        {present > 0 && (
+          <Circle
+            cx="18"
+            cy="18"
+            r={radius}
+            fill="none"
+            stroke="#10B981"
+            strokeWidth="5"
+            strokeDasharray={`${presentStroke} ${circumference}`}
+            strokeDashoffset="0"
+          />
+        )}
+      </Svg>
+      <Text
+        style={{
+          position: 'absolute',
+          fontSize: 11,
+          fontWeight: '800',
+          color: '#1f2937',
+          textAlign: 'center',
+        }}
+      >
+        {presentPercent}%
+      </Text>
+    </View>
+  );
+});
 
 export default function AttendanceScreen() {
   const { getToken } = useAuth();
-  const profile = useAuthStore((state) => state.profile);
+  const queryClient = useQueryClient();
 
-  const today = new Date();
-  const [currentYear, setCurrentYear] = useState(today.getFullYear());
-  const [currentMonth, setCurrentMonth] = useState(today.getMonth() + 1); // 1-indexed
-  const [selectedDay, setSelectedDay] = useState<MonthlyAttendanceDay | null>(null);
+  const profile = useAuthStore((state) => state.profile);
+  const isSessionActive = useAuthStore((state) => state.isSessionActive);
+  const activeSession = useAuthStore((state) => state.activeSession);
+
+  // Month navigation state
+  const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date().getMonth());
   const [refreshing, setRefreshing] = useState(false);
 
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['attendance-month', profile?.id, currentYear, currentMonth],
+  const handlePrevMonth = useCallback(() => {
+    setCalendarMonth((prev) => {
+      if (prev === 0) {
+        setCalendarYear((y) => y - 1);
+        return 11;
+      }
+      return prev - 1;
+    });
+  }, []);
+
+  const handleNextMonth = useCallback(() => {
+    setCalendarMonth((prev) => {
+      if (prev === 11) {
+        setCalendarYear((y) => y + 1);
+        return 0;
+      }
+      return prev + 1;
+    });
+  }, []);
+
+  // Fetch employee attendance history
+  const { data: attendanceHistory, isLoading, refetch } = useQuery({
+    queryKey: ['employee-attendance-history', profile?.employee_id],
     queryFn: async () => {
       const token = await getToken();
-      if (!token || !profile?.id) return { days: [], present_count: 0, absent_count: 0 };
-      return getMonthlyAttendance(profile.id, currentYear, currentMonth, token);
+      if (!token) return [];
+      return getAttendanceHistory(token);
     },
-    enabled: !!profile?.id,
   });
 
   const onRefresh = async () => {
@@ -44,214 +146,200 @@ export default function AttendanceScreen() {
     setRefreshing(false);
   };
 
-  const handlePrevMonth = () => {
-    if (currentMonth === 1) {
-      setCurrentMonth(12);
-      setCurrentYear((y) => y - 1);
-    } else {
-      setCurrentMonth((m) => m - 1);
+  const calendarData = useMemo(() => {
+    const now = new Date();
+    const year = calendarYear;
+    const month = calendarMonth;
+
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+
+    const startingDayOfWeek = firstDay.getDay();
+    const totalDays = lastDay.getDate();
+
+    const records = attendanceHistory ?? [];
+    const presentDates = new Set(
+      records.map((r: any) => {
+        const dtStr = r.session_login_time || r.timestamp || r.created_at || r.login_time;
+        return new Date(dtStr).toDateString();
+      })
+    );
+
+    const viewDate = new Date(year, month, 1);
+    const monthName = viewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const isCurrentMonth = year === now.getFullYear() && month === now.getMonth();
+
+    const days: ({
+      dayNumber: number;
+      dateStr: string;
+      isToday: boolean;
+      isPast: boolean;
+      isPresent: boolean;
+    } | null)[] = [];
+
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null);
     }
-    setSelectedDay(null);
-  };
 
-  const handleNextMonth = () => {
-    if (currentMonth === 12) {
-      setCurrentMonth(1);
-      setCurrentYear((y) => y + 1);
-    } else {
-      setCurrentMonth((m) => m + 1);
+    for (let day = 1; day <= totalDays; day++) {
+      const d = new Date(year, month, day);
+      const dateStr = d.toDateString();
+      const isToday = dateStr === now.toDateString();
+      const isPast = d < new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+      const isCheckedInToday = isCurrentMonth && isToday && Boolean(isSessionActive);
+      const isPresent = presentDates.has(dateStr) || (isToday && (isCheckedInToday || presentDates.has(dateStr)));
+
+      days.push({
+        dayNumber: day,
+        dateStr,
+        isToday,
+        isPast,
+        isPresent,
+      });
     }
-    setSelectedDay(null);
-  };
 
-  const monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ];
+    return { monthName, days, year, month, isCurrentMonth };
+  }, [calendarYear, calendarMonth, attendanceHistory, isSessionActive]);
 
-  // Calendar math
-  const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
-  const firstDayIndex = new Date(currentYear, currentMonth - 1, 1).getDay(); // 0 is Sunday
-
-  const daysMap = new Map<number, MonthlyAttendanceDay>();
-  if (data?.days) {
-    data.days.forEach((d) => {
-      const dayNum = parseInt(d.date.split('-')[2], 10);
-      daysMap.set(dayNum, d);
-    });
-  }
-
-  const presentCount = data?.present_count ?? 0;
-  const totalMarked = daysInMonth;
-  const absentCount = Math.max(0, totalMarked - presentCount);
-  const presentPct = totalMarked > 0 ? Math.round((presentCount / totalMarked) * 100) : 0;
+  const attendanceMonthStats = useMemo(() => {
+    const pastAndToday = calendarData.days.filter((d) => d && (d.isPast || d.isToday));
+    const present = pastAndToday.filter((d) => d?.isPresent).length;
+    const absent = pastAndToday.filter((d) => !d?.isPresent).length;
+    return { present, absent, total: pastAndToday.length };
+  }, [calendarData]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Attendance Calendar</Text>
+      {/* Page Header matching EmployeePortal.tsx */}
+      <View style={styles.pageHeader}>
+        <View style={styles.titleRow}>
+          <Feather name="clock" size={20} color="#6B2FA0" />
+          <Text style={styles.pageTitle}>Attendance Calendar</Text>
+        </View>
+
+        {/* Month Selector */}
+        <View style={styles.monthNav}>
+          <TouchableOpacity
+            onPress={handlePrevMonth}
+            style={styles.navArrow}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Feather name="chevron-left" size={18} color="#6B2FA0" />
+          </TouchableOpacity>
+          <Text style={styles.monthLabel}>{calendarData.monthName}</Text>
+          <TouchableOpacity
+            onPress={handleNextMonth}
+            style={styles.navArrow}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Feather name="chevron-right" size={18} color="#6B2FA0" />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#6B2FA0']} />}
       >
-        {/* Month Navigation Banner */}
-        <View style={styles.monthBanner}>
-          <IconButton icon="chevron-left" size={26} iconColor="#6B2FA0" onPress={handlePrevMonth} />
-          <Text style={styles.monthText}>
-            {monthNames[currentMonth - 1]} {currentYear}
-          </Text>
-          <IconButton icon="chevron-right" size={26} iconColor="#6B2FA0" onPress={handleNextMonth} />
-        </View>
+        <View style={styles.calendarCard}>
+          {/* Attendance Summary Banner: Left = Counts, Right = Mini Pie */}
+          <View style={styles.summaryBanner}>
+            <View style={styles.summaryLeft}>
+              <Text style={styles.summaryHeader}>MONTHLY ATTENDANCE</Text>
+              <View style={styles.metricsRow}>
+                <View style={styles.metricItem}>
+                  <View style={[styles.dot, { backgroundColor: '#10B981' }]} />
+                  <Text style={styles.metricText}>
+                    Present: <Text style={styles.presentCount}>{attendanceMonthStats.present}</Text>{' '}
+                    {attendanceMonthStats.present === 1 ? 'day' : 'days'}
+                  </Text>
+                </View>
 
-        {/* Ratio & Summary Cards */}
-        <View style={styles.summaryRow}>
-          <Card style={[styles.summaryCard, styles.presentBorder]}>
-            <Card.Content style={styles.summaryContent}>
-              <Text style={styles.summaryNum}>{presentCount}</Text>
-              <Text style={styles.summaryLabel}>Days Present</Text>
-            </Card.Content>
-          </Card>
-
-          <Card style={[styles.summaryCard, styles.absentBorder]}>
-            <Card.Content style={styles.summaryContent}>
-              <Text style={styles.summaryNum}>{absentCount}</Text>
-              <Text style={styles.summaryLabel}>Days Absent / Off</Text>
-            </Card.Content>
-          </Card>
-        </View>
-
-        {/* Attendance Ratio Bar */}
-        <Card style={styles.card}>
-          <Card.Content>
-            <View style={styles.ratioHeader}>
-              <Text style={styles.ratioLabel}>Monthly Presence Ratio</Text>
-              <Text style={styles.ratioValue}>{presentPct}%</Text>
-            </View>
-            <View style={styles.ratioBarBg}>
-              <View style={[styles.ratioBarFill, { width: `${presentPct}%` }]} />
-            </View>
-          </Card.Content>
-        </Card>
-
-        {/* Calendar Grid Card */}
-        <Card style={styles.card}>
-          <Card.Content>
-            {/* Weekday labels */}
-            <View style={styles.weekdayRow}>
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
-                <Text key={d} style={styles.weekdayText}>
-                  {d}
-                </Text>
-              ))}
-            </View>
-
-            {isLoading ? (
-              <View style={styles.loadingBox}>
-                <ActivityIndicator size="small" color="#6B2FA0" />
+                <View style={styles.metricItem}>
+                  <View style={[styles.dot, { backgroundColor: '#EF4444' }]} />
+                  <Text style={styles.metricText}>
+                    Absent: <Text style={styles.absentCount}>{attendanceMonthStats.absent}</Text>{' '}
+                    {attendanceMonthStats.absent === 1 ? 'day' : 'days'}
+                  </Text>
+                </View>
               </View>
-            ) : (
-              <View style={styles.grid}>
-                {/* Empty cells before month start */}
-                {Array.from({ length: firstDayIndex }).map((_, i) => (
-                  <View key={`empty-${i}`} style={styles.cell} />
-                ))}
+            </View>
 
-                {/* Days of month */}
-                {Array.from({ length: daysInMonth }).map((_, i) => {
-                  const dayNum = i + 1;
-                  const dayData = daysMap.get(dayNum);
-                  const isPresent = dayData?.status === 'PRESENT';
-                  const isSelected =
-                    selectedDay && parseInt(selectedDay.date.split('-')[2], 10) === dayNum;
+            <View style={styles.summaryRight}>
+              <AttendanceMiniPieChart
+                present={attendanceMonthStats.present}
+                absent={attendanceMonthStats.absent}
+                size={64}
+              />
+            </View>
+          </View>
 
-                  return (
-                    <TouchableOpacity
-                      key={`day-${dayNum}`}
+          {/* Days of week header */}
+          <View style={styles.weekHeader}>
+            {['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d) => (
+              <Text key={d} style={styles.weekHeaderText}>
+                {d}
+              </Text>
+            ))}
+          </View>
+
+          {/* Calendar Grid 7 columns */}
+          {isLoading ? (
+            <ActivityIndicator size="small" color="#6B2FA0" style={{ marginVertical: 32 }} />
+          ) : (
+            <View style={styles.gridContainer}>
+              {calendarData.days.map((item, idx) => {
+                if (!item) {
+                  return <View key={`empty-${idx}`} style={styles.emptyDayCell} />;
+                }
+
+                const isPresent = item.isPresent;
+                const isPastOrToday = item.isPast || item.isToday;
+
+                return (
+                  <View
+                    key={item.dayNumber}
+                    style={[
+                      styles.dayCell,
+                      item.isToday && styles.dayCellToday,
+                    ]}
+                  >
+                    <Text
                       style={[
-                        styles.cell,
-                        isPresent ? styles.presentCell : styles.absentCell,
-                        isSelected && styles.selectedCell,
+                        styles.dayNumberText,
+                        item.isToday && styles.dayNumberToday,
                       ]}
-                      onPress={() => {
-                        if (dayData) {
-                          setSelectedDay(dayData);
-                        } else {
-                          setSelectedDay({
-                            date: `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`,
-                            status: 'UNMARKED',
-                          });
-                        }
-                      }}
                     >
-                      <Text
-                        style={[
-                          styles.cellText,
-                          isPresent && styles.presentCellText,
-                          isSelected && styles.selectedCellText,
-                        ]}
-                      >
-                        {dayNum}
-                      </Text>
+                      {item.dayNumber}
+                    </Text>
+
+                    {isPastOrToday ? (
                       <View
                         style={[
-                          styles.dot,
-                          { backgroundColor: isPresent ? '#22C55E' : '#EF4444' },
+                          styles.statusBadge,
+                          isPresent ? styles.presentBadge : styles.absentBadge,
                         ]}
-                      />
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-          </Card.Content>
-        </Card>
-
-        {/* Selected Day Details Card */}
-        {selectedDay && (
-          <Card style={[styles.card, styles.detailCard]}>
-            <Card.Title
-              title={`Details for ${selectedDay.date}`}
-              left={(props) => (
-                <IconButton
-                  {...props}
-                  icon={selectedDay.status === 'PRESENT' ? 'check-circle' : 'close-circle'}
-                  iconColor={selectedDay.status === 'PRESENT' ? '#22C55E' : '#EF4444'}
-                />
-              )}
-            />
-            <Card.Content>
-              <Text style={styles.detailText}>
-                Status:{' '}
-                <Text
-                  style={{
-                    fontWeight: 'bold',
-                    color: selectedDay.status === 'PRESENT' ? '#22C55E' : '#EF4444',
-                  }}
-                >
-                  {selectedDay.status}
-                </Text>
-              </Text>
-              {selectedDay.check_in_time && (
-                <Text style={styles.detailText}>
-                  Check-In: {selectedDay.check_in_time}
-                </Text>
-              )}
-              {selectedDay.check_out_time && (
-                <Text style={styles.detailText}>
-                  Check-Out: {selectedDay.check_out_time}
-                </Text>
-              )}
-              {selectedDay.total_hours !== undefined && (
-                <Text style={styles.detailText}>
-                  Duty Duration: {selectedDay.total_hours.toFixed(1)} hrs
-                </Text>
-              )}
-            </Card.Content>
-          </Card>
-        )}
+                      >
+                        <Text
+                          style={[
+                            styles.statusBadgeText,
+                            isPresent ? styles.presentBadgeText : styles.absentBadgeText,
+                          ]}
+                        >
+                          {isPresent ? 'P' : 'A'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.futureText}>—</Text>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -260,168 +348,186 @@ export default function AttendanceScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#f6f3fb',
   },
-  header: {
-    backgroundColor: '#6B2FA0',
+  pageHeader: {
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e8e0f0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
   },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pageTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#6B2FA0',
+  },
+  monthNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  navArrow: {
+    padding: 3,
+  },
+  monthLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1f2937',
+    paddingHorizontal: 8,
+    minWidth: 105,
+    textAlign: 'center',
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 32,
+    paddingBottom: 28,
   },
-  monthBanner: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginBottom: 16,
+  calendarCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e8e0f0',
+    padding: 16,
+    shadowColor: '#6B2FA0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
     elevation: 2,
   },
-  monthText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1F2937',
-  },
-  summaryRow: {
+  summaryBanner: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
+    backgroundColor: '#f8fafc',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 14,
     marginBottom: 16,
   },
-  summaryCard: {
+  summaryLeft: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 4,
-    borderRadius: 12,
-    elevation: 2,
+    gap: 6,
   },
-  presentBorder: {
-    borderLeftWidth: 4,
-    borderLeftColor: '#22C55E',
+  summaryHeader: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#6b7280',
+    letterSpacing: 0.5,
   },
-  absentBorder: {
-    borderLeftWidth: 4,
-    borderLeftColor: '#EF4444',
+  metricsRow: {
+    gap: 4,
   },
-  summaryContent: {
+  metricItem: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    gap: 6,
   },
-  summaryNum: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#1F2937',
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
-  summaryLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 4,
+  metricText: {
+    fontSize: 13,
+    color: '#1f2937',
   },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    marginBottom: 16,
-    elevation: 2,
+  presentCount: {
+    color: '#10B981',
+    fontWeight: '800',
   },
-  ratioHeader: {
+  absentCount: {
+    color: '#EF4444',
+    fontWeight: '800',
+  },
+  summaryRight: {
+    paddingLeft: 8,
+  },
+  weekHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 8,
+    paddingHorizontal: 2,
   },
-  ratioLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  ratioValue: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#6B2FA0',
-  },
-  ratioBarBg: {
-    height: 10,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 5,
-    overflow: 'hidden',
-  },
-  ratioBarFill: {
-    height: '100%',
-    backgroundColor: '#22C55E',
-    borderRadius: 5,
-  },
-  weekdayRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  weekdayText: {
-    width: CELL_SIZE,
+  weekHeaderText: {
+    flex: 1,
     textAlign: 'center',
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#6B7280',
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6b7280',
   },
-  loadingBox: {
-    height: 200,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  grid: {
+  gridContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
-  cell: {
-    width: CELL_SIZE,
-    height: CELL_SIZE,
-    justifyContent: 'center',
+  emptyDayCell: {
+    width: '14.28%',
+    aspectRatio: 1,
+    padding: 2,
+  },
+  dayCell: {
+    width: '14.28%',
+    aspectRatio: 0.9,
+    padding: 4,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+    borderRadius: 10,
     alignItems: 'center',
-    borderRadius: 8,
+    justifyContent: 'space-between',
     marginVertical: 2,
   },
-  presentCell: {
-    backgroundColor: '#DCFCE7',
-  },
-  absentCell: {
-    backgroundColor: '#FEE2E2',
-  },
-  selectedCell: {
+  dayCellToday: {
     borderColor: '#6B2FA0',
     borderWidth: 2,
   },
-  cellText: {
-    fontSize: 13,
+  dayNumberText: {
+    fontSize: 11,
     fontWeight: '600',
-    color: '#1F2937',
+    color: '#1f2937',
   },
-  presentCellText: {
-    color: '#166534',
-  },
-  selectedCellText: {
+  dayNumberToday: {
+    fontWeight: '800',
     color: '#6B2FA0',
-    fontWeight: 'bold',
   },
-  dot: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    marginTop: 2,
+  statusBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  detailCard: {
-    borderTopWidth: 3,
-    borderTopColor: '#6B2FA0',
+  presentBadge: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
   },
-  detailText: {
-    fontSize: 14,
-    color: '#374151',
-    marginBottom: 6,
+  absentBadge: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  presentBadgeText: {
+    color: '#10B981',
+  },
+  absentBadgeText: {
+    color: '#EF4444',
+  },
+  futureText: {
+    fontSize: 11,
+    color: '#cbd5e1',
   },
 });

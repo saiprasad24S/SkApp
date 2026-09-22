@@ -1,18 +1,99 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, RefreshControl } from 'react-native';
-import { Text, Card, Avatar, Button, IconButton } from 'react-native-paper';
+import React, { useState, useEffect, memo, useMemo } from 'react';
+import {
+  StyleSheet,
+  View,
+  ScrollView,
+  RefreshControl,
+  Image,
+  Text,
+  TouchableOpacity,
+  ActivityIndicator,
+  Platform,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@clerk/clerk-expo';
+import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { getTodayAssignment } from '../../src/api/employeeApi';
 import { getNotifications } from '../../src/api/notificationApi';
 import CheckInModal from '../../src/components/CheckInModal';
 import NotificationSheet from '../../src/components/NotificationSheet';
 import { useLocationTracker } from '../../src/hooks/useLocationTracker';
+import * as Location from 'expo-location';
+
+const DigitalClockCard = memo(function DigitalClockCard() {
+  const [time, setTime] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <View style={styles.clockCard}>
+      <Text style={styles.clockDateText}>
+        {time.toLocaleDateString('en-IN', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })}
+      </Text>
+      <Text style={styles.clockTimeText}>
+        {time.toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true,
+        })}
+      </Text>
+    </View>
+  );
+});
+
+const ActiveDutyTimer = memo(function ActiveDutyTimer({
+  checkInTimeStr,
+}: {
+  checkInTimeStr: string | null | undefined;
+}) {
+  const [time, setTime] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const durationText = useMemo(() => {
+    if (!checkInTimeStr) return null;
+    try {
+      const checkInDate = new Date(checkInTimeStr);
+      const diffMs = Math.max(0, time.getTime() - checkInDate.getTime());
+      const totalSec = Math.floor(diffMs / 1000);
+      const hours = Math.floor(totalSec / 3600);
+      const minutes = Math.floor((totalSec % 3600) / 60);
+      const seconds = totalSec % 60;
+      if (hours > 0) {
+        return `${hours}h ${minutes}m ${seconds}s`;
+      }
+      return `${minutes}m ${seconds}s`;
+    } catch {
+      return null;
+    }
+  }, [checkInTimeStr, time]);
+
+  if (!durationText) return null;
+
+  return (
+    <View style={styles.timerWrapper}>
+      <Text style={styles.timerLabel}>Active Time</Text>
+      <Text style={styles.timerValue}>{durationText}</Text>
+    </View>
+  );
+});
 
 export default function HomeScreen() {
-  const { getToken } = useAuth();
+  const { getToken, signOut } = useAuth();
   const queryClient = useQueryClient();
 
   const profile = useAuthStore((state) => state.profile);
@@ -22,19 +103,35 @@ export default function HomeScreen() {
   // Background GPS tracker when session is active
   useLocationTracker();
 
-  const [currentTime, setCurrentTime] = useState(new Date());
   const [modalVisible, setModalVisible] = useState(false);
   const [notificationVisible, setNotificationVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [locationPermGranted, setLocationPermGranted] = useState<boolean | null>(null);
 
-  // Live digital clock ticker
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
+    checkLocationPermission();
   }, []);
 
+  const checkLocationPermission = async () => {
+    try {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      setLocationPermGranted(status === 'granted');
+    } catch {
+      setLocationPermGranted(false);
+    }
+  };
+
+  const requestLocationPermission = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      setLocationPermGranted(status === 'granted');
+    } catch {
+      setLocationPermGranted(false);
+    }
+  };
+
   // Today's patient assignment query
-  const { data: assignment, refetch: refetchAssignment } = useQuery({
+  const { data: assignment, refetch: refetchAssignment, isLoading: assignmentLoading } = useQuery({
     queryKey: ['today-assignment'],
     queryFn: async () => {
       const token = await getToken();
@@ -44,7 +141,7 @@ export default function HomeScreen() {
     staleTime: 1000 * 60,
   });
 
-  // Notification count query for bell badge
+  // Notification query
   const { data: notifData } = useQuery({
     queryKey: ['notifications'],
     queryFn: async () => {
@@ -60,162 +157,162 @@ export default function HomeScreen() {
     await Promise.all([
       refetchAssignment(),
       queryClient.invalidateQueries({ queryKey: ['notifications'] }),
+      queryClient.invalidateQueries({ queryKey: ['profile'] }),
+      checkLocationPermission(),
     ]);
     setRefreshing(false);
   };
 
   const displayName = profile?.name || 'Employee';
   const unreadCount = notifData?.unread_count || 0;
+  const avatarUrl =
+    profile?.profile_photo ||
+    `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=6B2FA0&color=fff&size=200`;
+
+  const checkInTimeStr = (activeSession?.check_in_time as string | undefined) || undefined;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
-      {/* Top Header */}
+      {/* Top Header matching EmployeePortal.tsx */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>SkandanHomecarre</Text>
-          <Text style={styles.headerSub}>Skandan Home Carre Clinic</Text>
+        <View style={styles.logoRow}>
+          <Image
+            source={require('../../assets/skandan_logo.png')}
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
         </View>
-        <View style={styles.headerIcons}>
-          <View style={styles.bellWrapper}>
-            <IconButton
-              icon="bell-outline"
-              iconColor="#FFFFFF"
-              size={24}
-              onPress={() => setNotificationVisible(true)}
-            />
+
+        <View style={styles.headerActions}>
+          {/* Notification Bell */}
+          <TouchableOpacity
+            style={styles.bellButton}
+            onPress={() => setNotificationVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Feather name="bell" size={20} color="#1f2937" />
             {unreadCount > 0 && (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
               </View>
             )}
-          </View>
+          </TouchableOpacity>
+
+          {/* Log Out Button */}
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={() => signOut()}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.logoutText}>Log Out</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#6B2FA0']} />}
       >
-        {/* Profile Card */}
-        <Card style={styles.card}>
-          <Card.Content style={styles.profileContent}>
-            <Avatar.Text
-              size={64}
-              label={displayName.substring(0, 2).toUpperCase()}
-              style={styles.avatar}
+        {/* Employee Profile Card matching .employee-card in global.css */}
+        <View style={styles.employeeCard}>
+          <View style={styles.avatarWrapper}>
+            <Image
+              source={{ uri: avatarUrl }}
+              style={styles.avatarImage}
             />
-            <View style={styles.profileDetails}>
-              <Text style={styles.profileName}>{displayName}</Text>
-              <Text style={styles.profileSub}>{profile?.designation || 'Healthcare Professional'}</Text>
-              <Text style={styles.profileSub}>{profile?.department || 'Department'}</Text>
-              <Text style={styles.profileId}>ID: {profile?.employee_id || 'N/A'}</Text>
-            </View>
-          </Card.Content>
-        </Card>
+          </View>
+          <Text style={styles.employeeName}>{displayName}</Text>
+          <Text style={styles.employeeDesignation}>{profile?.designation || 'Healthcare Professional'}</Text>
+          <Text style={styles.employeeDepartment}>{profile?.department || 'General'} Department</Text>
+          {profile?.email && <Text style={styles.employeeEmail}>{profile.email}</Text>}
+          {profile?.phone && <Text style={styles.employeePhone}>{profile.phone}</Text>}
+        </View>
 
-        {/* Live Clock & Duty Status Card */}
-        <Card style={[styles.card, isSessionActive ? styles.activeCard : styles.inactiveCard]}>
-          <Card.Content>
-            <View style={styles.clockRow}>
-              <View>
-                <Text style={styles.clockLabel}>Current Time (IST)</Text>
-                <Text style={styles.clockTime}>
-                  {currentTime.toLocaleTimeString('en-US', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                    hour12: true,
-                  })}
-                </Text>
-                <Text style={styles.clockDate}>
-                  {currentTime.toLocaleDateString('en-US', {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                  })}
-                </Text>
-              </View>
+        {/* Attendance & Duty Card */}
+        <View style={styles.glassCard}>
+          <Text style={styles.cardEyebrow}>ATTENDANCE & DUTY</Text>
 
-              <View style={styles.statusBox}>
-                <View
-                  style={[
-                    styles.statusIndicator,
-                    { backgroundColor: isSessionActive ? '#22C55E' : '#9CA3AF' },
-                  ]}
-                />
-                <Text style={styles.statusLabel}>
-                  {isSessionActive ? 'DUTY ACTIVE' : 'OFF DUTY'}
-                </Text>
-              </View>
-            </View>
-          </Card.Content>
-        </Card>
-
-        {/* Check-In / Check-Out Action Button */}
-        <Button
-          mode="contained"
-          buttonColor={isSessionActive ? '#DC2626' : '#6B2FA0'}
-          textColor="#FFFFFF"
-          icon={isSessionActive ? 'clock-check-outline' : 'camera'}
-          style={styles.actionButton}
-          labelStyle={styles.actionButtonLabel}
-          onPress={() => setModalVisible(true)}
-        >
-          {isSessionActive ? 'Clock Out (Complete Duty)' : 'Check-In with Face Verification'}
-        </Button>
-
-        {/* Today's Shift Card */}
-        <Card style={styles.card}>
-          <Card.Title
-            title="Assigned Shift"
-            left={(props) => (
-              <Avatar.Icon
-                {...props}
-                icon="clock-time-four-outline"
-                style={{ backgroundColor: '#6B2FA0' }}
-              />
-            )}
-          />
-          <Card.Content>
-            <Text style={styles.shiftName}>{profile?.shift_name || 'General Shift'}</Text>
-            <Text style={styles.shiftTime}>
-              {profile?.shift_start_time || '09:00 AM'} — {profile?.shift_end_time || '06:00 PM'}
-            </Text>
-          </Card.Content>
-        </Card>
-
-        {/* Today's Patient Assignment Card */}
-        <Card style={styles.card}>
-          <Card.Title
-            title="Today's Patient Assignment"
-            left={(props) => (
-              <Avatar.Icon
-                {...props}
-                icon="account-heart-outline"
-                style={{ backgroundColor: '#6B2FA0' }}
-              />
-            )}
-          />
-          <Card.Content>
-            {assignment ? (
-              <View>
-                <Text style={styles.patientName}>{assignment.patient_name}</Text>
+          {assignmentLoading ? (
+            <ActivityIndicator size="small" color="#6B2FA0" style={{ marginVertical: 12 }} />
+          ) : assignment ? (
+            <View style={styles.assignmentBox}>
+              <Text style={styles.patientTitle}>Patient: {assignment.patient_name}</Text>
+              <View style={styles.locationRow}>
+                <Feather name="map-pin" size={15} color="#6B2FA0" style={{ marginTop: 2, marginRight: 6 }} />
                 <Text style={styles.patientAddress}>{assignment.patient_address}</Text>
-                {assignment.patient_phone && (
-                  <Text style={styles.patientPhone}>Contact: {assignment.patient_phone}</Text>
-                )}
-                <View style={styles.tag}>
-                  <Text style={styles.tagText}>Status: {assignment.status}</Text>
-                </View>
               </View>
-            ) : (
-              <Text style={styles.emptyAssignmentText}>
-                No field patient visits assigned for today. Attendance will match your default clinic location.
+            </View>
+          ) : (
+            <View style={styles.assignmentBox}>
+              <Text style={styles.noAssignmentText}>
+                No field patient visits assigned for today. Attendance matches clinic headquarters.
               </Text>
-            )}
-          </Card.Content>
-        </Card>
+            </View>
+          )}
+
+          {/* Location Permission Warning if not granted */}
+          {locationPermGranted === false && (
+            <View style={styles.locationWarning}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                <Feather name="alert-circle" size={18} color="#DC2626" />
+                <Text style={styles.warningText}>
+                  GPS location access is required to verify duty attendance.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.retryPermButton}
+                onPress={requestLocationPermission}
+              >
+                <Feather name="rotate-ccw" size={13} color="#ffffff" style={{ marginRight: 4 }} />
+                <Text style={styles.retryPermText}>Allow GPS</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Active Duty Banner */}
+          {isSessionActive && (
+            <View style={styles.activeDutyBanner}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.activeHeaderRow}>
+                  <View style={styles.greenPulseDot} />
+                  <Text style={styles.activeDutyTitle}>ACTIVE DUTY SESSION</Text>
+                </View>
+                {checkInTimeStr && (
+                  <Text style={styles.checkInTimeText}>
+                    Check-in Time: {new Date(checkInTimeStr).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                  </Text>
+                )}
+              </View>
+              <ActiveDutyTimer checkInTimeStr={checkInTimeStr} />
+            </View>
+          )}
+
+          {/* Punch Button */}
+          <TouchableOpacity
+            style={[
+              styles.punchButton,
+              isSessionActive ? styles.punchButtonActive : styles.punchButtonInactive,
+            ]}
+            onPress={() => setModalVisible(true)}
+            activeOpacity={0.85}
+          >
+            <Feather
+              name={isSessionActive ? 'log-out' : 'camera'}
+              size={18}
+              color="#ffffff"
+              style={{ marginRight: 8 }}
+            />
+            <Text style={styles.punchButtonText}>
+              {isSessionActive
+                ? 'Attendance Logout (Check Out)'
+                : 'Mark Attendance (Check In)'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Digital Clock Card matching .clock-card */}
+        <DigitalClockCard />
       </ScrollView>
 
       {/* Check In / Out Modal */}
@@ -226,10 +323,11 @@ export default function HomeScreen() {
         todayAssignment={assignment}
         onSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ['today-assignment'] });
+          queryClient.invalidateQueries({ queryKey: ['profile'] });
         }}
       />
 
-      {/* Notifications Drawer */}
+      {/* Notifications Modal */}
       <NotificationSheet
         visible={notificationVisible}
         onClose={() => setNotificationVisible(false)}
@@ -241,181 +339,320 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#f6f3fb',
   },
   header: {
-    backgroundColor: '#6B2FA0',
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e8e0f0',
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
   },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  headerSub: {
-    color: '#E0E0E0',
-    fontSize: 12,
-  },
-  headerIcons: {
+  logoRow: {
     flexDirection: 'row',
+    alignItems: 'center',
   },
-  bellWrapper: {
+  headerLogo: {
+    width: 140,
+    height: 36,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  bellButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
     position: 'relative',
   },
   badge: {
     position: 'absolute',
-    top: 4,
-    right: 4,
+    top: -4,
+    right: -4,
     backgroundColor: '#EF4444',
+    borderRadius: 9,
     minWidth: 18,
     height: 18,
-    borderRadius: 9,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 3,
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 3,
   },
   badgeText: {
-    color: '#FFFFFF',
+    color: '#ffffff',
     fontSize: 10,
-    fontWeight: 'bold',
+    fontWeight: '700',
+  },
+  logoutButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+    backgroundColor: 'rgba(239, 68, 68, 0.06)',
+  },
+  logoutText: {
+    color: '#DC2626',
+    fontSize: 12,
+    fontWeight: '700',
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 32,
+    paddingBottom: 28,
+    gap: 16,
   },
-  card: {
-    marginBottom: 16,
-    backgroundColor: '#FFFFFF',
+  employeeCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e8e0f0',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    shadowColor: '#6B2FA0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
     elevation: 2,
-    borderRadius: 12,
   },
-  profileContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  avatarWrapper: {
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    borderWidth: 3,
+    borderColor: 'rgba(107, 47, 160, 0.25)',
+    padding: 3,
+    marginBottom: 12,
   },
-  avatar: {
-    backgroundColor: '#6B2FA0',
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 50,
   },
-  profileDetails: {
-    marginLeft: 16,
-    flex: 1,
+  employeeName: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#1f2937',
+    textAlign: 'center',
   },
-  profileName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1F2937',
-  },
-  profileSub: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  profileId: {
-    fontSize: 12,
+  employeeDesignation: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#6B2FA0',
-    fontWeight: '600',
-    marginTop: 4,
+    marginTop: 3,
+    textAlign: 'center',
   },
-  activeCard: {
-    borderLeftWidth: 5,
-    borderLeftColor: '#22C55E',
-  },
-  inactiveCard: {
-    borderLeftWidth: 5,
-    borderLeftColor: '#9CA3AF',
-  },
-  clockRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  clockLabel: {
-    fontSize: 11,
-    color: '#6B7280',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-  },
-  clockTime: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1F2937',
+  employeeDepartment: {
+    fontSize: 13,
+    color: '#6b7280',
     marginTop: 2,
+    textAlign: 'center',
   },
-  clockDate: {
+  employeeEmail: {
     fontSize: 12,
-    color: '#4B5563',
+    color: '#6b7280',
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  employeePhone: {
+    fontSize: 12,
+    color: '#6b7280',
     marginTop: 2,
+    textAlign: 'center',
   },
-  statusBox: {
-    alignItems: 'center',
+  glassCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e8e0f0',
+    padding: 20,
+    shadowColor: '#6B2FA0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    elevation: 2,
   },
-  statusIndicator: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
+  cardEyebrow: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0B2C8C',
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  assignmentBox: {
+    marginBottom: 16,
+  },
+  patientTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1f2937',
     marginBottom: 4,
   },
-  statusLabel: {
-    fontSize: 11,
-    fontWeight: 'bold',
-    color: '#374151',
-  },
-  actionButton: {
-    marginVertical: 4,
-    marginBottom: 16,
-    paddingVertical: 6,
-    borderRadius: 10,
-    elevation: 3,
-  },
-  actionButtonLabel: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  shiftName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#1F2937',
-  },
-  shiftTime: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  patientName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#1F2937',
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
   },
   patientAddress: {
+    flex: 1,
     fontSize: 13,
-    color: '#4B5563',
-    marginTop: 4,
+    color: '#6b7280',
+    lineHeight: 18,
   },
-  patientPhone: {
+  noAssignmentText: {
     fontSize: 13,
-    color: '#6B2FA0',
-    marginTop: 2,
+    color: '#6b7280',
+    lineHeight: 18,
   },
-  tag: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#EDE9FE',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+  locationWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.2)',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 14,
+    gap: 8,
+  },
+  warningText: {
+    fontSize: 12,
+    color: '#DC2626',
+    flex: 1,
+    lineHeight: 16,
+  },
+  retryPermButton: {
+    backgroundColor: '#0B2C8C',
     borderRadius: 6,
-    marginTop: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  tagText: {
+  retryPermText: {
+    color: '#ffffff',
     fontSize: 11,
-    color: '#6B2FA0',
     fontWeight: '600',
   },
-  emptyAssignmentText: {
-    color: '#6B7280',
+  activeDutyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.25)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  activeHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  greenPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  activeDutyTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#065F46',
+    letterSpacing: 0.5,
+  },
+  checkInTimeText: {
+    fontSize: 12,
+    color: '#1f2937',
+    fontWeight: '600',
+  },
+  timerWrapper: {
+    alignItems: 'flex-end',
+  },
+  timerLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  timerValue: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#10B981',
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  punchButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    paddingVertical: 14,
+    elevation: 3,
+  },
+  punchButtonInactive: {
+    backgroundColor: '#6B2FA0',
+    shadowColor: '#6B2FA0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+  },
+  punchButtonActive: {
+    backgroundColor: '#EF4444',
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+  },
+  punchButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  clockCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e8e0f0',
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#6B2FA0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
+    elevation: 2,
+  },
+  clockDateText: {
     fontSize: 13,
-    lineHeight: 18,
+    fontWeight: '600',
+    color: '#6b7280',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  clockTimeText: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#6B2FA0',
+    textAlign: 'center',
   },
 });

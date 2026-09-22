@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -6,47 +6,50 @@ import {
   Modal,
   RefreshControl,
   TouchableOpacity,
+  Text,
+  TextInput,
+  ActivityIndicator,
   Alert,
 } from 'react-native';
-import {
-  Text,
-  Card,
-  Button,
-  FAB,
-  TextInput,
-  Chip,
-  ActivityIndicator,
-  IconButton,
-} from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@clerk/clerk-expo';
+import { Feather } from '@expo/vector-icons';
 import { getMyLeaves, getLeaveSummary, applyLeave, ApplyLeavePayload } from '../../src/api/leaveApi';
 import { LeaveRequest } from '../../src/types/employee';
 
 const LEAVE_TYPES = [
-  { label: 'Casual Leave', value: 'CASUAL' },
-  { label: 'Sick Leave', value: 'SICK' },
-  { label: 'Maternity/Paternity', value: 'MATERNITY_PATERNITY' },
-  { label: 'Bereavement', value: 'BEREAVEMENT' },
-  { label: 'Unpaid Leave', value: 'UNPAID' },
-] as const;
+  { label: 'Casual Leave', value: 'CASUAL' as const },
+  { label: 'Sick Leave', value: 'SICK' as const },
+  { label: 'Maternity / Paternity', value: 'MATERNITY_PATERNITY' as const },
+  { label: 'Bereavement', value: 'BEREAVEMENT' as const },
+  { label: 'Unpaid Leave', value: 'UNPAID' as const },
+];
+
+const LEAVE_TYPE_LABELS: Record<string, string> = {
+  CASUAL: 'Casual Leave',
+  SICK: 'Sick Leave',
+  MATERNITY_PATERNITY: 'Maternity / Paternity Leave',
+  BEREAVEMENT: 'Bereavement Leave',
+  UNPAID: 'Unpaid Leave',
+};
 
 export default function LeavesScreen() {
   const { getToken } = useAuth();
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
   const [modalVisible, setModalVisible] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Apply Leave form state
+  // Form state
   const [leaveType, setLeaveType] = useState<ApplyLeavePayload['leave_type']>('CASUAL');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [reason, setReason] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
-  // Leaves query
+  // Queries
   const { data: leaves = [], isLoading, refetch } = useQuery({
     queryKey: ['my-leaves'],
     queryFn: async () => {
@@ -56,12 +59,11 @@ export default function LeavesScreen() {
     },
   });
 
-  // Summary query
   const { data: summary, refetch: refetchSummary } = useQuery({
-    queryKey: ['leaves-summary'],
+    queryKey: ['leave-summary'],
     queryFn: async () => {
       const token = await getToken();
-      if (!token) return { pending: 0, approved: 0, rejected: 0, total: 0 };
+      if (!token) return null;
       return getLeaveSummary(token);
     },
   });
@@ -72,6 +74,19 @@ export default function LeavesScreen() {
     setRefreshing(false);
   };
 
+  const calculatedDays = useMemo(() => {
+    if (!startDate || !endDate) return 0;
+    try {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return 0;
+      const diffMs = end.getTime() - start.getTime();
+      return Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1;
+    } catch {
+      return 0;
+    }
+  }, [startDate, endDate]);
+
   const applyMutation = useMutation({
     mutationFn: async (payload: ApplyLeavePayload) => {
       const token = await getToken();
@@ -79,229 +94,383 @@ export default function LeavesScreen() {
       return applyLeave(payload, token);
     },
     onSuccess: () => {
-      Alert.alert('Leave Applied', 'Your leave request has been submitted for approval.');
+      queryClient.invalidateQueries({ queryKey: ['my-leaves'] });
+      queryClient.invalidateQueries({ queryKey: ['leave-summary'] });
       setModalVisible(false);
+      setShowConfirm(false);
       setStartDate('');
       setEndDate('');
       setReason('');
-      queryClient.invalidateQueries({ queryKey: ['my-leaves'] });
-      queryClient.invalidateQueries({ queryKey: ['leaves-summary'] });
+      setFormError(null);
+      Alert.alert('Leave Application Submitted', 'Your leave request has been submitted for admin review.');
     },
     onError: (err: any) => {
-      Alert.alert('Submission Failed', err.detail || err.message || 'Failed to submit leave.');
+      setFormError(err?.message || 'Failed to submit leave application. Please check details.');
     },
   });
 
-  const handleApply = () => {
-    if (!startDate || !endDate || !reason.trim()) {
-      Alert.alert('Required Fields', 'Please fill in start date, end date, and reason.');
+  const handleOpenModal = () => {
+    setFormError(null);
+    setShowConfirm(false);
+    setModalVisible(true);
+  };
+
+  const handleReviewStep = () => {
+    if (!startDate || !endDate) {
+      setFormError('Please enter both start and end dates (YYYY-MM-DD).');
       return;
     }
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (startDate < todayStr) {
+      setFormError('Leave start date cannot be in the past.');
+      return;
+    }
+    if (endDate < startDate) {
+      setFormError('End date cannot be earlier than start date.');
+      return;
+    }
+    if (!reason.trim()) {
+      setFormError('Please provide a reason for the leave.');
+      return;
+    }
+    setFormError(null);
+    setShowConfirm(true);
+  };
+
+  const handleFinalSubmit = () => {
     applyMutation.mutate({
       leave_type: leaveType,
-      start_date: startDate.trim(),
-      end_date: endDate.trim(),
+      start_date: startDate,
+      end_date: endDate,
       reason: reason.trim(),
     });
   };
 
-  const filteredLeaves = leaves.filter((item) => {
-    if (activeTab === 'ALL') return true;
-    return item.status === activeTab;
-  });
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'APPROVED':
-        return '#22C55E';
-      case 'REJECTED':
-        return '#EF4444';
-      default:
-        return '#F59E0B';
-    }
-  };
+  const selectedTypeLabel = LEAVE_TYPES.find((t) => t.value === leaveType)?.label || leaveType;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
-      {/* Header */}
+      {/* Header matching EmployeePortal.tsx */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Leave Management</Text>
+        <View style={styles.titleRow}>
+          <Feather name="calendar" size={20} color="#6B2FA0" />
+          <Text style={styles.pageTitle}>My Leave Requests</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.applyButton}
+          onPress={handleOpenModal}
+          activeOpacity={0.8}
+        >
+          <Feather name="plus" size={16} color="#ffffff" style={{ marginRight: 4 }} />
+          <Text style={styles.applyButtonText}>Apply for Leave</Text>
+        </TouchableOpacity>
       </View>
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#6B2FA0']} />}
       >
-        {/* Summary Metric Cards */}
-        <View style={styles.summaryGrid}>
-          <Card style={styles.metricCard}>
-            <Card.Content style={styles.metricContent}>
-              <Text style={styles.metricNum}>{summary?.total ?? leaves.length}</Text>
-              <Text style={styles.metricLabel}>Total</Text>
-            </Card.Content>
-          </Card>
-          <Card style={styles.metricCard}>
-            <Card.Content style={styles.metricContent}>
-              <Text style={[styles.metricNum, { color: '#F59E0B' }]}>
-                {summary?.pending ?? leaves.filter((l) => l.status === 'PENDING').length}
-              </Text>
-              <Text style={styles.metricLabel}>Pending</Text>
-            </Card.Content>
-          </Card>
-          <Card style={styles.metricCard}>
-            <Card.Content style={styles.metricContent}>
-              <Text style={[styles.metricNum, { color: '#22C55E' }]}>
-                {summary?.approved ?? leaves.filter((l) => l.status === 'APPROVED').length}
-              </Text>
-              <Text style={styles.metricLabel}>Approved</Text>
-            </Card.Content>
-          </Card>
-          <Card style={styles.metricCard}>
-            <Card.Content style={styles.metricContent}>
-              <Text style={[styles.metricNum, { color: '#EF4444' }]}>
-                {summary?.rejected ?? leaves.filter((l) => l.status === 'REJECTED').length}
-              </Text>
-              <Text style={styles.metricLabel}>Rejected</Text>
-            </Card.Content>
-          </Card>
-        </View>
-
-        {/* Filter Tabs */}
-        <View style={styles.tabRow}>
-          {(['ALL', 'PENDING', 'APPROVED', 'REJECTED'] as const).map((tab) => (
-            <Chip
-              key={tab}
-              selected={activeTab === tab}
-              onPress={() => setActiveTab(tab)}
-              style={[styles.tabChip, activeTab === tab && styles.activeChip]}
-              textStyle={activeTab === tab ? styles.activeChipText : styles.chipText}
-            >
-              {tab}
-            </Chip>
-          ))}
-        </View>
-
-        {/* Leaves List */}
-        {isLoading ? (
-          <View style={styles.centerBox}>
-            <ActivityIndicator size="large" color="#6B2FA0" />
+        {/* Leave Status Summary Cards */}
+        {summary && (
+          <View style={styles.balanceGrid}>
+            <View style={styles.balanceCard}>
+              <Text style={styles.balanceTitle}>PENDING</Text>
+              <Text style={[styles.balanceCount, { color: '#F59E0B' }]}>{summary.pending ?? 0}</Text>
+              <Text style={styles.balanceSub}>requests</Text>
+            </View>
+            <View style={styles.balanceCard}>
+              <Text style={styles.balanceTitle}>APPROVED</Text>
+              <Text style={[styles.balanceCount, { color: '#10B981' }]}>{summary.approved ?? 0}</Text>
+              <Text style={styles.balanceSub}>requests</Text>
+            </View>
+            <View style={styles.balanceCard}>
+              <Text style={styles.balanceTitle}>TOTAL</Text>
+              <Text style={[styles.balanceCount, { color: '#6B2FA0' }]}>{summary.total ?? 0}</Text>
+              <Text style={styles.balanceSub}>applied</Text>
+            </View>
           </View>
-        ) : filteredLeaves.length === 0 ? (
-          <View style={styles.centerBox}>
-            <Text style={styles.emptyText}>No leave requests found.</Text>
-          </View>
-        ) : (
-          filteredLeaves.map((item) => (
-            <Card key={item.id} style={styles.leaveCard}>
-              <Card.Content>
-                <View style={styles.cardHeader}>
-                  <Text style={styles.leaveType}>{item.leave_type.replace('_', ' ')}</Text>
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      { backgroundColor: `${getStatusColor(item.status)}20` },
-                    ]}
-                  >
-                    <Text
-                      style={[styles.statusText, { color: getStatusColor(item.status) }]}
-                    >
-                      {item.status}
-                    </Text>
+        )}
+
+        {/* Leave History List */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Leave History</Text>
+
+          {isLoading ? (
+            <ActivityIndicator size="small" color="#6B2FA0" style={{ marginVertical: 32 }} />
+          ) : leaves.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Feather name="calendar" size={40} color="#cbd5e1" style={{ marginBottom: 10 }} />
+              <Text style={styles.emptyText}>No leave requests submitted yet.</Text>
+              <TouchableOpacity
+                style={styles.emptyApplyBtn}
+                onPress={handleOpenModal}
+              >
+                <Feather name="plus" size={14} color="#6B2FA0" style={{ marginRight: 4 }} />
+                <Text style={styles.emptyApplyBtnText}>Apply for Leave</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.leaveList}>
+              {leaves.map((leave: LeaveRequest) => {
+                const isPending = leave.status === 'PENDING';
+                const isApproved = leave.status === 'APPROVED';
+                const isRejected = leave.status === 'REJECTED';
+
+                const badgeConfig = isPending
+                  ? { bg: 'rgba(245, 158, 11, 0.12)', text: '#B45309', border: 'rgba(245, 158, 11, 0.3)', label: 'Pending', icon: 'clock' as const }
+                  : isApproved
+                  ? { bg: 'rgba(16, 185, 129, 0.12)', text: '#047857', border: 'rgba(16, 185, 129, 0.3)', label: 'Approved', icon: 'check-circle' as const }
+                  : { bg: 'rgba(239, 68, 68, 0.12)', text: '#B91C1C', border: 'rgba(239, 68, 68, 0.3)', label: 'Rejected', icon: 'x-circle' as const };
+
+                const typeDisplay = LEAVE_TYPE_LABELS[leave.leave_type] || leave.leave_type;
+
+                return (
+                  <View key={leave.id} style={styles.leaveItem}>
+                    <View style={styles.itemHeader}>
+                      <View style={styles.itemTypeRow}>
+                        <Text style={styles.itemTypeName}>
+                          {typeDisplay}
+                        </Text>
+                        <View
+                          style={[
+                            styles.statusPill,
+                            { backgroundColor: badgeConfig.bg, borderColor: badgeConfig.border },
+                          ]}
+                        >
+                          <Feather name={badgeConfig.icon} size={11} color={badgeConfig.text} style={{ marginRight: 4 }} />
+                          <Text style={[styles.statusPillText, { color: badgeConfig.text }]}>
+                            {badgeConfig.label}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.appliedDate}>
+                        Applied: {new Date(leave.applied_at || Date.now()).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                      </Text>
+                    </View>
+
+                    {/* Date Range & Total Days */}
+                    <View style={styles.dateRangeRow}>
+                      <View style={styles.dateRange}>
+                        <Feather name="calendar" size={14} color="#6B2FA0" style={{ marginRight: 5 }} />
+                        <Text style={styles.dateText}>
+                          {new Date(leave.start_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                          {' → '}
+                          {new Date(leave.end_date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </Text>
+                      </View>
+                      <View style={styles.durationBadge}>
+                        <Text style={styles.durationText}>
+                          {leave.total_days} {leave.total_days === 1 ? 'Day' : 'Days'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Reason */}
+                    <View style={styles.reasonRow}>
+                      <Text style={styles.reasonLabel}>Reason: </Text>
+                      <Text style={styles.reasonText}>{leave.reason}</Text>
+                    </View>
+
+                    {/* Rejection Note */}
+                    {isRejected && leave.rejection_reason && (
+                      <View style={styles.rejectionBox}>
+                        <Feather name="alert-circle" size={15} color="#DC2626" style={{ marginTop: 1, marginRight: 6 }} />
+                        <Text style={styles.rejectionText}>
+                          <Text style={{ fontWeight: '700' }}>Rejection Reason: </Text>
+                          {leave.rejection_reason}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Apply For Leave Modal */}
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Apply for Leave</Text>
+                <Text style={styles.modalSub}>Submit a leave request for administrative review</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setModalVisible(false)}
+                style={styles.closeBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Feather name="x" size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+
+            {formError && (
+              <View style={styles.errorBox}>
+                <Feather name="alert-circle" size={16} color="#DC2626" style={{ marginRight: 6 }} />
+                <Text style={styles.errorBoxText}>{formError}</Text>
+              </View>
+            )}
+
+            {!showConfirm ? (
+              /* Step 1: Form */
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.formScroll}>
+                {/* Leave Type Selector */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>LEAVE TYPE *</Text>
+                  <View style={styles.typeChips}>
+                    {LEAVE_TYPES.map((t) => {
+                      const isSelected = leaveType === t.value;
+                      return (
+                        <TouchableOpacity
+                          key={t.value}
+                          style={[styles.typeChip, isSelected && styles.typeChipSelected]}
+                          onPress={() => setLeaveType(t.value)}
+                        >
+                          <Text style={[styles.typeChipText, isSelected && styles.typeChipTextSelected]}>
+                            {t.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 </View>
 
-                <Text style={styles.dateRange}>
-                  {item.start_date} to {item.end_date} ({item.total_days} days)
-                </Text>
+                {/* Date Inputs */}
+                <View style={styles.datesRow}>
+                  <View style={[styles.formGroup, { flex: 1 }]}>
+                    <Text style={styles.formLabel}>START DATE (YYYY-MM-DD) *</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="2026-09-23"
+                      placeholderTextColor="#9ca3af"
+                      value={startDate}
+                      onChangeText={(val) => {
+                        setStartDate(val);
+                        if (formError) setFormError(null);
+                      }}
+                      autoCapitalize="none"
+                    />
+                  </View>
 
-                <Text style={styles.reasonText}>{item.reason}</Text>
+                  <View style={[styles.formGroup, { flex: 1 }]}>
+                    <Text style={styles.formLabel}>END DATE (YYYY-MM-DD) *</Text>
+                    <TextInput
+                      style={styles.formInput}
+                      placeholder="2026-09-25"
+                      placeholderTextColor="#9ca3af"
+                      value={endDate}
+                      onChangeText={(val) => {
+                        setEndDate(val);
+                        if (formError) setFormError(null);
+                      }}
+                      autoCapitalize="none"
+                    />
+                  </View>
+                </View>
 
-                {item.rejection_reason && (
-                  <View style={styles.rejectionBox}>
-                    <Text style={styles.rejectionLabel}>Rejection Reason:</Text>
-                    <Text style={styles.rejectionText}>{item.rejection_reason}</Text>
+                {/* Duration Pill */}
+                {calculatedDays > 0 && (
+                  <View style={styles.durationPill}>
+                    <Text style={styles.durationPillLabel}>Calculated Duration:</Text>
+                    <Text style={styles.durationPillValue}>
+                      {calculatedDays} {calculatedDays === 1 ? 'Day' : 'Days'}
+                    </Text>
                   </View>
                 )}
-              </Card.Content>
-            </Card>
-          ))
-        )}
-      </ScrollView>
 
-      {/* Floating Action Button */}
-      <FAB
-        icon="plus"
-        label="Apply Leave"
-        style={styles.fab}
-        color="#FFFFFF"
-        onPress={() => setModalVisible(true)}
-      />
+                {/* Reason */}
+                <View style={styles.formGroup}>
+                  <Text style={styles.formLabel}>REASON *</Text>
+                  <TextInput
+                    style={[styles.formInput, styles.textArea]}
+                    placeholder="Provide details about your leave..."
+                    placeholderTextColor="#9ca3af"
+                    value={reason}
+                    onChangeText={(val) => {
+                      setReason(val);
+                      if (formError) setFormError(null);
+                    }}
+                    multiline
+                    numberOfLines={3}
+                  />
+                </View>
 
-      {/* Apply Leave Modal */}
-      <Modal visible={modalVisible} animationType="slide" onRequestClose={() => setModalVisible(false)}>
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Apply for Leave</Text>
-            <IconButton icon="close" size={24} iconColor="#FFFFFF" onPress={() => setModalVisible(false)} />
+                {/* Buttons */}
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => setModalVisible(false)}
+                  >
+                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.submitBtn}
+                    onPress={handleReviewStep}
+                  >
+                    <Text style={styles.submitBtnText}>Continue to Review</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            ) : (
+              /* Step 2: Confirmation */
+              <View style={styles.confirmView}>
+                <Text style={styles.confirmHeading}>Confirm Leave Request</Text>
+                <View style={styles.confirmDetailsBox}>
+                  <View style={styles.confirmRow}>
+                    <Text style={styles.confirmLabel}>Leave Type:</Text>
+                    <Text style={styles.confirmValue}>{selectedTypeLabel}</Text>
+                  </View>
+                  <View style={styles.confirmRow}>
+                    <Text style={styles.confirmLabel}>Dates:</Text>
+                    <Text style={styles.confirmValue}>
+                      {startDate} → {endDate}
+                    </Text>
+                  </View>
+                  <View style={styles.confirmRow}>
+                    <Text style={styles.confirmLabel}>Total Duration:</Text>
+                    <Text style={[styles.confirmValue, { color: '#6B2FA0', fontWeight: '800' }]}>
+                      {calculatedDays} Days
+                    </Text>
+                  </View>
+                  <View style={styles.confirmRow}>
+                    <Text style={styles.confirmLabel}>Reason:</Text>
+                    <Text style={styles.confirmValue}>{reason}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.cancelBtn}
+                    onPress={() => setShowConfirm(false)}
+                    disabled={applyMutation.isPending}
+                  >
+                    <Text style={styles.cancelBtnText}>Back to Edit</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.submitBtn, applyMutation.isPending && { opacity: 0.7 }]}
+                    onPress={handleFinalSubmit}
+                    disabled={applyMutation.isPending}
+                  >
+                    {applyMutation.isPending ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <Text style={styles.submitBtnText}>Confirm & Submit</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
           </View>
-
-          <ScrollView contentContainerStyle={styles.modalContent}>
-            <Text style={styles.label}>Leave Type</Text>
-            <View style={styles.typeRow}>
-              {LEAVE_TYPES.map((t) => (
-                <Chip
-                  key={t.value}
-                  selected={leaveType === t.value}
-                  onPress={() => setLeaveType(t.value)}
-                  style={[styles.typeChip, leaveType === t.value && styles.activeChip]}
-                  textStyle={leaveType === t.value ? styles.activeChipText : styles.chipText}
-                >
-                  {t.label}
-                </Chip>
-              ))}
-            </View>
-
-            <TextInput
-              label="Start Date (YYYY-MM-DD)"
-              value={startDate}
-              onChangeText={setStartDate}
-              placeholder="2026-09-15"
-              mode="outlined"
-              style={styles.input}
-            />
-
-            <TextInput
-              label="End Date (YYYY-MM-DD)"
-              value={endDate}
-              onChangeText={setEndDate}
-              placeholder="2026-09-17"
-              mode="outlined"
-              style={styles.input}
-            />
-
-            <TextInput
-              label="Reason for Leave"
-              value={reason}
-              onChangeText={setReason}
-              placeholder="Brief explanation of your leave request"
-              mode="outlined"
-              multiline
-              numberOfLines={4}
-              style={styles.input}
-            />
-
-            <Button
-              mode="contained"
-              buttonColor="#6B2FA0"
-              textColor="#FFFFFF"
-              onPress={handleApply}
-              loading={applyMutation.isPending}
-              disabled={applyMutation.isPending}
-              style={styles.submitBtn}
-            >
-              Submit Leave Request
-            </Button>
-          </ScrollView>
         </View>
       </Modal>
     </SafeAreaView>
@@ -311,180 +480,407 @@ export default function LeavesScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#f6f3fb',
   },
   header: {
-    backgroundColor: '#6B2FA0',
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e8e0f0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
   },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: 'bold',
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pageTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#6B2FA0',
+  },
+  applyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#6B2FA0',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    shadowColor: '#6B2FA0',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  applyButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 80,
+    paddingBottom: 28,
+    gap: 16,
   },
-  summaryGrid: {
+  balanceGrid: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+    gap: 10,
   },
-  metricCard: {
+  balanceCard: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 3,
-    borderRadius: 10,
-    elevation: 2,
-  },
-  metricContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e8e0f0',
+    padding: 14,
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-  },
-  metricNum: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1F2937',
-  },
-  metricLabel: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  tabRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  tabChip: {
-    backgroundColor: '#FFFFFF',
+    shadowColor: '#6B2FA0',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
     elevation: 1,
   },
-  activeChip: {
-    backgroundColor: '#6B2FA0',
+  balanceTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6b7280',
+    letterSpacing: 0.5,
   },
-  chipText: {
+  balanceCount: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#6B2FA0',
+    marginVertical: 2,
+  },
+  balanceSub: {
     fontSize: 11,
-    color: '#4B5563',
+    color: '#9ca3af',
   },
-  activeChipText: {
-    fontSize: 11,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  leaveCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    marginBottom: 12,
+  card: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#e8e0f0',
+    padding: 18,
+    shadowColor: '#6B2FA0',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 14,
     elevation: 2,
   },
-  cardHeader: {
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1f2937',
+    marginBottom: 14,
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 28,
+  },
+  emptyText: {
+    fontSize: 13,
+    color: '#6b7280',
+    marginBottom: 12,
+  },
+  emptyApplyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#6B2FA0',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  emptyApplyBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B2FA0',
+  },
+  leaveList: {
+    gap: 12,
+  },
+  leaveItem: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 14,
+    padding: 14,
+    gap: 8,
+  },
+  itemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  itemTypeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  itemTypeName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1f2937',
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 9999,
+    paddingVertical: 2,
+    paddingHorizontal: 8,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  appliedDate: {
+    fontSize: 11,
+    color: '#6b7280',
+  },
+  dateRangeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  leaveType: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#1F2937',
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
   dateRange: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dateText: {
     fontSize: 13,
-    color: '#6B2FA0',
     fontWeight: '600',
-    marginTop: 4,
+    color: '#1f2937',
+  },
+  durationBadge: {
+    backgroundColor: 'rgba(107, 47, 160, 0.08)',
+    borderRadius: 6,
+    paddingVertical: 2,
+    paddingHorizontal: 7,
+  },
+  durationText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B2FA0',
+  },
+  reasonRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  reasonLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1f2937',
   },
   reasonText: {
-    fontSize: 13,
-    color: '#4B5563',
-    marginTop: 6,
+    flex: 1,
+    fontSize: 12,
+    color: '#6b7280',
+    lineHeight: 16,
   },
   rejectionBox: {
-    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+    borderRadius: 8,
     padding: 8,
-    backgroundColor: '#FEE2E2',
-    borderRadius: 6,
-  },
-  rejectionLabel: {
-    fontSize: 11,
-    color: '#991B1B',
-    fontWeight: 'bold',
   },
   rejectionText: {
     fontSize: 12,
-    color: '#7F1D1D',
-    marginTop: 2,
-  },
-  centerBox: {
-    paddingVertical: 60,
-    alignItems: 'center',
-  },
-  emptyText: {
-    color: '#6B7280',
-    fontSize: 15,
-  },
-  fab: {
-    position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#6B2FA0',
-  },
-  modalContainer: {
+    color: '#DC2626',
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    lineHeight: 16,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: '90%',
   },
   modalHeader: {
-    backgroundColor: '#6B2FA0',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 40,
-    paddingBottom: 10,
+    marginBottom: 16,
   },
   modalTitle: {
-    color: '#FFFFFF',
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '800',
+    color: '#1f2937',
   },
-  modalContent: {
-    padding: 16,
+  modalSub: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
   },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
+  closeBtn: {
+    padding: 4,
   },
-  typeRow: {
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 14,
+  },
+  errorBoxText: {
+    fontSize: 12,
+    color: '#DC2626',
+    flex: 1,
+  },
+  formScroll: {
+    gap: 14,
+    paddingBottom: 16,
+  },
+  formGroup: {
+    gap: 6,
+  },
+  formLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1f2937',
+    letterSpacing: 0.4,
+  },
+  typeChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 16,
+    gap: 6,
   },
   typeChip: {
-    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: '#f8fafc',
   },
-  input: {
-    marginBottom: 16,
-    backgroundColor: '#FFFFFF',
+  typeChipSelected: {
+    backgroundColor: '#6B2FA0',
+    borderColor: '#6B2FA0',
+  },
+  typeChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6b7280',
+  },
+  typeChipTextSelected: {
+    color: '#ffffff',
+  },
+  datesRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  formInput: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    fontSize: 13,
+    color: '#1f2937',
+  },
+  textArea: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  durationPill: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(107, 47, 160, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(107, 47, 160, 0.2)',
+    borderRadius: 10,
+    padding: 10,
+  },
+  durationPillLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+  durationPillValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#6B2FA0',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
+  },
+  cancelBtn: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  cancelBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6b7280',
   },
   submitBtn: {
-    marginTop: 8,
-    paddingVertical: 6,
-    borderRadius: 8,
+    flex: 1.5,
+    borderRadius: 10,
+    backgroundColor: '#6B2FA0',
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  submitBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  confirmView: {
+    gap: 14,
+    paddingBottom: 16,
+  },
+  confirmHeading: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1f2937',
+  },
+  confirmDetailsBox: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 14,
+    gap: 8,
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  confirmLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '600',
+  },
+  confirmValue: {
+    fontSize: 12,
+    color: '#1f2937',
+    fontWeight: '600',
   },
 });

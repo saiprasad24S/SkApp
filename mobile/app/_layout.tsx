@@ -1,10 +1,10 @@
 import React, { useEffect } from 'react';
-import { Slot } from 'expo-router';
+import { Slot, useRouter, useSegments } from 'expo-router';
 import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
 import * as SecureStore from 'expo-secure-store';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PaperProvider } from 'react-native-paper';
-import { StatusBar } from 'react-native';
+import { StatusBar, Platform } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { useAuthStore } from '../src/store/authStore';
 import { loginToBackend } from '../src/lib/auth';
@@ -31,6 +31,13 @@ const queryClient = new QueryClient({
 
 const tokenCache = {
   async getToken(key: string) {
+    if (Platform.OS === 'web') {
+      try {
+        return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+      } catch {
+        return null;
+      }
+    }
     try {
       const item = await SecureStore.getItemAsync(key);
       if (item) {
@@ -44,6 +51,12 @@ const tokenCache = {
     }
   },
   async saveToken(key: string, value: string) {
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
+      } catch {}
+      return;
+    }
     try {
       return SecureStore.setItemAsync(key, value);
     } catch (err) {
@@ -57,10 +70,25 @@ const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test
 function InitialLayout() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const setAuth = useAuthStore((state) => state.setAuth);
+  const segments = useSegments();
+  const router = useRouter();
 
   useEffect(() => {
     console.log(`[Startup] InitialLayout mounted: isLoaded=${isLoaded}, isSignedIn=${isSignedIn}`);
   }, [isLoaded, isSignedIn]);
+
+  // Auth routing: redirect to home if signed in, or to sign-in if not signed in
+  useEffect(() => {
+    if (!isLoaded) return;
+    const inAuthGroup = segments[0] === '(auth)';
+    if (isSignedIn && inAuthGroup) {
+      console.log('[Auth] User is signed in, redirecting to /(employee)/home');
+      router.replace('/(employee)/home');
+    } else if (!isSignedIn && !inAuthGroup) {
+      console.log('[Auth] User not signed in, redirecting to /(auth)/sign-in');
+      router.replace('/(auth)/sign-in');
+    }
+  }, [isLoaded, isSignedIn, segments]);
 
   // Non-blocking background session sync with Django backend
   useEffect(() => {

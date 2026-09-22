@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Redirect } from 'expo-router';
 import { useAuth } from '@clerk/clerk-expo';
 import { View, ActivityIndicator, StyleSheet, Image } from 'react-native';
+import { useAuthStore } from '../src/store/authStore';
 
 export default function IndexScreen() {
   const { isLoaded, isSignedIn } = useAuth();
