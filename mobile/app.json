@@ -87,7 +87,8 @@
           "enableCodeScanner": false
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "./plugins/withNetworkSecurityConfig"
     ],
     "experiments": {
       "typedRoutes": true
