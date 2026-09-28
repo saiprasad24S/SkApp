@@ -87,6 +87,8 @@ export default function ConversationList({ onSelectConversation }: ConversationL
   const {
     data: allDirectoryEmployees = [],
     isLoading: isDirectoryLoading,
+    isError: isDirectoryError,
+    error: directoryError,
     refetch: refetchDirectory,
   } = useQuery<EmployeeSearchResult[]>({
     queryKey: ['chat-directory-all-employees'],
@@ -96,6 +98,7 @@ export default function ConversationList({ onSelectConversation }: ConversationL
       return searchEmployees('', token);
     },
     staleTime: 60000,
+    retry: 2,
     refetchInterval: 30000,
   });
 
@@ -103,6 +106,8 @@ export default function ConversationList({ onSelectConversation }: ConversationL
   const {
     data: conversations = [],
     isLoading: isConversationsLoading,
+    isError: isConversationsError,
+    error: conversationsError,
     refetch: refetchConversations,
   } = useQuery<ConversationItem[]>({
     queryKey: ['chat-conversations'],
@@ -111,6 +116,7 @@ export default function ConversationList({ onSelectConversation }: ConversationL
       if (!token) return [];
       return getConversations(token);
     },
+    retry: 2,
     refetchInterval: 5000,
   });
 
@@ -509,13 +515,39 @@ export default function ConversationList({ onSelectConversation }: ConversationL
             ) : (
               /* === RECENT / NORMAL VIEW === */
               <View>
+                {/* Connection Error Banner */}
+                {isConversationsError && (
+                  <View style={styles.chatErrorCard}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                      <Feather name="wifi-off" size={20} color="#DC2626" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.chatErrorTitle}>Unable to load conversations</Text>
+                        <Text style={styles.chatErrorSub} numberOfLines={2}>
+                          {(conversationsError as any)?.message || 'Check server connection and retry.'}
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.chatRetryBtn}
+                      onPress={() => {
+                        refetchConversations();
+                        refetchDirectory();
+                      }}
+                    >
+                      <Feather name="rotate-ccw" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+                      <Text style={styles.chatRetryBtnText}>Retry</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionHeaderText}>Recent</Text>
                 </View>
 
-                {isConversationsLoading && conversations.length === 0 ? (
+                {isConversationsLoading && !isConversationsError && conversations.length === 0 ? (
                   <View style={styles.loaderBox}>
                     <ActivityIndicator size="large" color="#6B2FA0" />
+                    <Text style={{ marginTop: 12, fontSize: 13, color: '#64748B' }}>Connecting to chat...</Text>
                   </View>
                 ) : filteredConversations.length === 0 ? (
                   <View>
@@ -546,7 +578,26 @@ export default function ConversationList({ onSelectConversation }: ConversationL
                             Colleagues Directory ({allDirectoryEmployees.length})
                           </Text>
                         </View>
-                        {allDirectoryEmployees.map((emp) => renderEmployeeRow(emp))}
+                        {allDirectoryEmployees.length === 0 && isDirectoryLoading ? (
+                          <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                            <ActivityIndicator size="small" color="#6B2FA0" />
+                            <Text style={{ marginTop: 8, fontSize: 12, color: '#94A3B8' }}>Loading directory...</Text>
+                          </View>
+                        ) : allDirectoryEmployees.length === 0 && isDirectoryError ? (
+                          <View style={{ padding: 16, alignItems: 'center' }}>
+                            <Text style={{ fontSize: 13, color: '#94A3B8', textAlign: 'center' }}>
+                              Could not load employee directory.
+                            </Text>
+                            <TouchableOpacity
+                              style={[styles.chatRetryBtn, { marginTop: 8 }]}
+                              onPress={() => refetchDirectory()}
+                            >
+                              <Text style={styles.chatRetryBtnText}>Retry Directory</Text>
+                            </TouchableOpacity>
+                          </View>
+                        ) : (
+                          allDirectoryEmployees.map((emp) => renderEmployeeRow(emp))
+                        )}
                       </View>
                     )}
                   </View>
@@ -960,5 +1011,40 @@ const styles = StyleSheet.create({
   emptySearchText: {
     fontSize: 14,
     color: '#64748B',
+  },
+  chatErrorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 12,
+    padding: 12,
+    margin: 16,
+    gap: 8,
+  },
+  chatErrorTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  chatErrorSub: {
+    fontSize: 11,
+    color: '#B91C1C',
+    marginTop: 2,
+  },
+  chatRetryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  chatRetryBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

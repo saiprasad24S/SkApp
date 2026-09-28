@@ -17,6 +17,7 @@ import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { getTodayAssignment } from '../../src/api/employeeApi';
 import { getNotifications } from '../../src/api/notificationApi';
+import { loginToBackend } from '../../src/lib/auth';
 import CheckInModal from '../../src/components/CheckInModal';
 import NotificationSheet from '../../src/components/NotificationSheet';
 import { useLocationTracker } from '../../src/hooks/useLocationTracker';
@@ -96,9 +97,8 @@ export default function HomeScreen() {
   const { getToken, signOut } = useAuth();
   const queryClient = useQueryClient();
 
-  const profile = useAuthStore((state) => state.profile);
-  const isSessionActive = useAuthStore((state) => state.isSessionActive);
-  const activeSession = useAuthStore((state) => state.activeSession);
+  const cachedProfile = useAuthStore((state) => state.profile);
+  const setAuth = useAuthStore((state) => state.setAuth);
 
   // Background GPS tracker when session is active
   useLocationTracker();
@@ -130,18 +130,60 @@ export default function HomeScreen() {
     }
   };
 
-  // Today's patient assignment query
-  const { data: assignment, refetch: refetchAssignment, isLoading: assignmentLoading } = useQuery({
-    queryKey: ['today-assignment'],
+  // 1. Primary Profile & Session Query - replicates working Vite EmployeePortal profileQuery
+  const {
+    data: authData,
+    isLoading: isProfileLoading,
+    isError: isProfileError,
+    error: profileError,
+    refetch: refetchProfile,
+  } = useQuery({
+    queryKey: ['employee-portal-profile'],
+    queryFn: async () => {
+      const token = await getToken();
+      if (!token) throw new Error('Missing authentication session');
+      const response = await loginToBackend(token);
+      if (response?.employee) {
+        setAuth(response);
+      }
+      return response;
+    },
+    staleTime: 1000 * 60 * 2, // 2 minutes
+    retry: 2,
+    retryDelay: (idx) => Math.min(1000 * 2 ** idx, 4000),
+  });
+
+  const profile = authData?.employee || cachedProfile;
+  const isSessionActive = Boolean(
+    authData?.session_summary?.active_session ??
+    useAuthStore.getState().isSessionActive
+  );
+  const activeSession = authData?.session_summary || useAuthStore.getState().activeSession;
+  const sessionStatus: string = typeof authData?.session_summary?.status === 'string'
+    ? authData.session_summary.status
+    : isSessionActive
+    ? 'Present'
+    : 'Not Marked';
+
+  // 2. Today's patient assignment query - only fired once profile is known
+  const {
+    data: assignment,
+    refetch: refetchAssignment,
+    isLoading: assignmentLoading,
+    isError: assignmentError,
+  } = useQuery({
+    queryKey: ['today-assignment', profile?.id],
+    enabled: !!profile,
     queryFn: async () => {
       const token = await getToken();
       if (!token) return null;
       return getTodayAssignment(token);
     },
     staleTime: 1000 * 60,
+    retry: 1,
   });
 
-  // Notification query
+  // 3. Notification query
   const { data: notifData } = useQuery({
     queryKey: ['notifications'],
     queryFn: async () => {
@@ -155,15 +197,15 @@ export default function HomeScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     await Promise.all([
+      refetchProfile(),
       refetchAssignment(),
       queryClient.invalidateQueries({ queryKey: ['notifications'] }),
-      queryClient.invalidateQueries({ queryKey: ['profile'] }),
       checkLocationPermission(),
     ]);
     setRefreshing(false);
   };
 
-  const displayName = profile?.name || 'Employee';
+  const displayName = profile?.name || (isProfileLoading ? 'Loading profile...' : 'Employee');
   const unreadCount = notifData?.unread_count || 0;
   const avatarUrl =
     profile?.profile_photo ||
@@ -214,6 +256,22 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#6B2FA0']} />}
       >
+        {/* Server Connection Error Banner */}
+        {isProfileError && (
+          <View style={styles.errorBanner}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+              <Feather name="wifi-off" size={18} color="#DC2626" />
+              <Text style={styles.errorBannerText} numberOfLines={2}>
+                {(profileError as any)?.message || 'Unable to sync with Skandan server.'}
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.retryButton} onPress={() => refetchProfile()}>
+              <Feather name="rotate-ccw" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Employee Profile Card matching .employee-card in global.css */}
         <View style={styles.employeeCard}>
           <View style={styles.avatarWrapper}>
@@ -231,7 +289,15 @@ export default function HomeScreen() {
 
         {/* Attendance & Duty Card */}
         <View style={styles.glassCard}>
-          <Text style={styles.cardEyebrow}>ATTENDANCE & DUTY</Text>
+          <View style={styles.cardHeaderRow}>
+            <Text style={styles.cardEyebrow}>ATTENDANCE & DUTY</Text>
+            <View style={[styles.statusBadge, isSessionActive ? styles.statusBadgePresent : styles.statusBadgeDefault]}>
+              <View style={[styles.statusDot, isSessionActive ? styles.statusDotPresent : styles.statusDotDefault]} />
+              <Text style={[styles.statusBadgeText, isSessionActive ? styles.statusBadgeTextPresent : styles.statusBadgeTextDefault]}>
+                {sessionStatus}
+              </Text>
+            </View>
+          </View>
 
           {assignmentLoading ? (
             <ActivityIndicator size="small" color="#6B2FA0" style={{ marginVertical: 12 }} />
@@ -323,7 +389,7 @@ export default function HomeScreen() {
         todayAssignment={assignment}
         onSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ['today-assignment'] });
-          queryClient.invalidateQueries({ queryKey: ['profile'] });
+          queryClient.invalidateQueries({ queryKey: ['employee-portal-profile'] });
         }}
       />
 
@@ -654,5 +720,82 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#6B2FA0',
     textAlign: 'center',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 16,
+    gap: 8,
+  },
+  errorBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#991B1B',
+    flex: 1,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 5,
+  },
+  statusBadgePresent: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  statusBadgeDefault: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusDotPresent: {
+    backgroundColor: '#10B981',
+  },
+  statusDotDefault: {
+    backgroundColor: '#9CA3AF',
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  statusBadgeTextPresent: {
+    color: '#065F46',
+  },
+  statusBadgeTextDefault: {
+    color: '#4B5563',
   },
 });

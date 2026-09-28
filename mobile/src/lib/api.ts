@@ -5,6 +5,7 @@ export interface ApiError {
   status: number;
   message: string;
   detail?: string;
+  isNetworkError?: boolean;
 }
 
 export async function handleApiError(response: Response): Promise<never> {
@@ -22,7 +23,6 @@ export async function handleApiError(response: Response): Promise<never> {
       detail = data.detail;
     }
   } catch (e) {
-    // Cannot parse JSON, keep default message
     message = response.statusText || message;
   }
 
@@ -30,6 +30,7 @@ export async function handleApiError(response: Response): Promise<never> {
     status: response.status,
     message,
     detail,
+    isNetworkError: false,
   };
   throw error;
 }
@@ -37,7 +38,7 @@ export async function handleApiError(response: Response): Promise<never> {
 export async function authedFetch(
   path: string,
   token: string,
-  init?: RequestInit
+  init?: RequestInit & { timeoutMs?: number }
 ): Promise<Response> {
   const url = `${API_BASE_URL}${path}`;
   const headers = new Headers(init?.headers);
@@ -48,14 +49,34 @@ export async function authedFetch(
     headers.set('Content-Type', 'application/json');
   }
 
+  const timeoutMs = init?.timeoutMs ?? 12000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   let response: Response;
   try {
     response = await fetch(url, {
       ...init,
       headers,
+      signal: init?.signal || controller.signal,
     });
-  } catch (error) {
-    throw new Error('Network request failed. Please check your connection.');
+  } catch (error: any) {
+    clearTimeout(timer);
+    const isTimeout = error?.name === 'AbortError' || error?.message?.includes('aborted');
+    const msg = isTimeout
+      ? `Server request timed out after ${Math.round(timeoutMs / 1000)}s. Please check server connectivity.`
+      : `Network request failed. Unable to connect to server at ${API_BASE_URL || 'configured API URL'}.`;
+    
+    console.warn(`[API Network Error] ${init?.method || 'GET'} ${path}: ${msg}`);
+    const apiError: ApiError = {
+      status: 0,
+      message: msg,
+      detail: error?.message,
+      isNetworkError: true,
+    };
+    throw apiError;
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!response.ok) {

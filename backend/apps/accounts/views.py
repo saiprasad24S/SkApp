@@ -284,14 +284,29 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
 
 class CurrentEmployeeView(APIView):
-    def get(self, request):
-        if getattr(request.user, "role", None) == "ADMIN":
-            employee = Employee.objects.filter(pk=request.query_params.get("employee_id")).first()
-        else:
-            employee = Employee.objects.filter(pk=getattr(request.user, "employee_id", None)).first()
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, employee_id=None):
+        target_id = employee_id
+        if target_id in (None, "me", ""):
+            target_id = getattr(request.user, "employee_id", None)
+        
+        user_role = getattr(request.user, "role", None)
+        user_email = getattr(request.user, "email", None)
+
+        if user_role == "ADMIN" and request.query_params.get("employee_id"):
+            target_id = request.query_params.get("employee_id")
+
+        employee = None
+        if target_id and str(target_id).isdigit():
+            employee = Employee.objects.filter(pk=int(target_id)).first()
+        elif user_email:
+            employee = Employee.objects.filter(email__iexact=user_email).first()
+
         if not employee:
-            return Response({"detail": "Employee not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(EmployeeSerializer(employee).data)
+            return Response({"detail": "Employee profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response(EmployeeSerializer(employee, context={"request": request}).data)
 
 
 class UploadProfilePhotoView(APIView):

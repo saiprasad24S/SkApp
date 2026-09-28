@@ -11,9 +11,12 @@ from apps.attendance.views import (
 
 urlpatterns = [
     path("checkin", CheckInView.as_view(), name="checkin"),
+    path("checkin/", CheckInView.as_view(), name="checkin-slash"),
     path("checkout", CheckOutView.as_view(), name="checkout"),
+    path("checkout/", CheckOutView.as_view(), name="checkout-slash"),
     path("export", AttendanceExportView.as_view(), name="attendance-export"),
     path("manual-edit", ManualAttendanceEditView.as_view(), name="manual-edit"),
     path("employee-month", EmployeeMonthAttendanceView.as_view(), name="employee-month-attendance"),
+    path("employee-month/", EmployeeMonthAttendanceView.as_view(), name="employee-month-attendance-slash"),
     path("", AttendanceListView.as_view(), name="attendance-list"),
 ]

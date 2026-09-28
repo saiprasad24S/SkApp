@@ -90,35 +90,37 @@ function InitialLayout() {
     }
   }, [isLoaded, isSignedIn, segments]);
 
-  // Non-blocking background session sync with Django backend
+  // Resilient background session sync with Django backend
   useEffect(() => {
     if (!isLoaded || !isSignedIn) return;
 
     let isMounted = true;
 
-    const syncSession = async () => {
+    const syncSession = async (attempt = 1) => {
       try {
-        console.log('[Startup] Syncing employee session with backend in background...');
+        console.log(`[Startup] Syncing employee session with backend (attempt ${attempt})...`);
         const tokenTimeout = new Promise<null>((resolve) =>
-          setTimeout(() => resolve(null), 3000)
+          setTimeout(() => resolve(null), 8000)
         );
         const token = await Promise.race([getToken(), tokenTimeout]);
         if (!token || !isMounted) return;
 
-        const backendPromise = loginToBackend(token);
-        const backendTimeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Backend ping timeout (3500ms)')), 3500)
-        );
-        const response = await Promise.race([backendPromise, backendTimeout]);
+        const response = await loginToBackend(token);
         if (isMounted) {
-          console.log('[Startup] Background backend sync success, employee ID:', response.employee?.id);
+          console.log('[Startup] Backend sync success, employee ID:', response.employee?.id);
           setAuth(response);
 
           // Non-blocking push token registration
           registerForPushNotificationsAsync(token, response.employee?.id).catch(() => {});
         }
       } catch (err: any) {
-        console.warn('[Startup] Background backend sync skipped (offline/off-LAN):', err?.message || err);
+        console.warn(`[Startup] Backend sync attempt ${attempt} failed:`, err?.message || err);
+        if (isMounted && attempt < 3) {
+          // Retry with exponential backoff: 2s, 4s
+          setTimeout(() => {
+            if (isMounted) syncSession(attempt + 1);
+          }, attempt * 2000);
+        }
       }
     };
 
