@@ -174,15 +174,77 @@ export async function getGroups(token: string): Promise<ConversationItem[]> {
 
 export async function createGroup(
   groupName: string,
-  memberIds: number[],
-  token: string
+  memberIds: (number | string)[],
+  token: string,
+  description: string = ''
 ): Promise<ConversationItem> {
   const res = await authedFetch('/api/communication/groups/', token, {
     method: 'POST',
     body: JSON.stringify({
       group_name: groupName,
+      group_description: description,
       member_ids: memberIds,
     }),
   });
   return res.json();
 }
+
+export async function updateGroup(
+  groupId: number,
+  data: {
+    group_name?: string;
+    group_description?: string;
+    add_member_ids?: (number | string)[];
+    remove_member_ids?: (number | string)[];
+    is_archived?: boolean;
+  },
+  token: string
+): Promise<ConversationItem> {
+  const res = await authedFetch(`/api/communication/groups/${groupId}/`, token, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function deleteGroup(
+  groupId: number,
+  token: string,
+  permanent: boolean = false
+): Promise<void> {
+  await authedFetch(
+    `/api/communication/groups/${groupId}/?permanent=${permanent}`,
+    token,
+    { method: 'DELETE' }
+  );
+}
+
+export async function getAdminEmployeeConversations(
+  employeeId: number,
+  token: string
+): Promise<{ employee: EmployeeSearchResult; conversations: ConversationItem[] }> {
+  const res = await authedFetch(
+    `/api/communication/admin/employees/${employeeId}/conversations/`,
+    token
+  );
+  return res.json();
+}
+
+export async function getAdminConversationMessages(
+  conversationId: number,
+  token: string,
+  limit: number = 100
+): Promise<{
+  conversation_id: number;
+  type: string;
+  group_name: string | null;
+  members: EmployeeSearchResult[];
+  messages: ChatMessage[];
+}> {
+  const res = await authedFetch(
+    `/api/communication/admin/conversations/${conversationId}/messages/?limit=${limit}`,
+    token
+  );
+  return res.json();
+}
+

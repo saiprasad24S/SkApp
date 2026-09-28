@@ -56,8 +56,12 @@ export interface ConversationItem {
   id: number;
   type: 'DIRECT' | 'GROUP';
   group_name?: string;
-  members?: number[];
+  group_description?: string;
+  is_archived?: boolean;
+  created_by_name?: string;
+  members?: (number | EmployeeSearchResult)[];
   updated_at: string;
+  created_at?: string;
   other_member?: EmployeeSearchResult;
   last_message?: LastMessagePreview;
   unread_count: number;

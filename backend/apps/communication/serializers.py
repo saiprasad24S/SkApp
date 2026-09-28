@@ -207,10 +207,23 @@ class GroupSerializer(serializers.ModelSerializer):
     members = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
+    created_by_name = serializers.CharField(source='created_by.name', read_only=True)
 
     class Meta:
         model = Conversation
-        fields = ["id", "type", "group_name", "updated_at", "members", "last_message", "unread_count"]
+        fields = [
+            "id",
+            "type",
+            "group_name",
+            "group_description",
+            "is_archived",
+            "created_by_name",
+            "updated_at",
+            "created_at",
+            "members",
+            "last_message",
+            "unread_count",
+        ]
 
     def get_members(self, obj):
         if hasattr(obj, "_prefetched_objects_cache") and "members" in obj._prefetched_objects_cache:
@@ -245,3 +258,45 @@ class GroupSerializer(serializers.ModelSerializer):
         if hasattr(obj, "_prefetched_objects_cache") and "messages" in obj._prefetched_objects_cache:
             return sum(1 for m in obj.messages.all() if m.sender_id != current_employee.id and not m.read_at)
         return obj.messages.exclude(sender=current_employee).filter(read_at__isnull=True).count()
+
+
+class AdminConversationListSerializer(serializers.ModelSerializer):
+    participants = serializers.SerializerMethodField()
+    last_message = serializers.SerializerMethodField()
+    message_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Conversation
+        fields = [
+            "id",
+            "type",
+            "group_name",
+            "group_description",
+            "is_archived",
+            "created_at",
+            "updated_at",
+            "participants",
+            "last_message",
+            "message_count",
+        ]
+
+    def get_participants(self, obj: Conversation):
+        members = obj.members.select_related("employee__presence").all()
+        return [EmployeeSearchSerializer(m.employee).data for m in members]
+
+    def get_last_message(self, obj: Conversation):
+        msg = obj.messages.order_by("-created_at").select_related("sender").first()
+        if not msg:
+            return None
+        return {
+            "id": msg.id,
+            "content": "This message was deleted." if msg.is_deleted else msg.content,
+            "sender_name": msg.sender.name,
+            "sender_id": msg.sender.employee_id,
+            "created_at": msg.created_at.isoformat(),
+            "status": "READ" if msg.read_at else ("DELIVERED" if msg.delivered_at else "SENT"),
+        }
+
+    def get_message_count(self, obj: Conversation):
+        return obj.messages.count()
+

@@ -17,6 +17,15 @@ class Conversation(models.Model):
         db_index=True,
     )
     group_name = models.CharField(max_length=255, blank=True, null=True)
+    group_description = models.TextField(blank=True, default="")
+    created_by = models.ForeignKey(
+        Employee,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_conversations",
+    )
+    is_archived = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
 

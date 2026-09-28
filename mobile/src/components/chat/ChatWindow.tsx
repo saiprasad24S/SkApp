@@ -9,15 +9,17 @@ import {
   Alert,
   Clipboard,
   ToastAndroid,
+  TextInput as RNTextInput,
+  Modal,
 } from 'react-native';
 import {
   Text,
-  TextInput,
   IconButton,
   Avatar,
   ActivityIndicator,
   Menu,
 } from 'react-native-paper';
+import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -55,6 +57,13 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
   // Reaction & message context menu
   const [selectedMsg, setSelectedMsg] = useState<ChatMessage | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
+
+  // Modern Input & Image Attachment States
+  const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [imagePreviewModalVisible, setImagePreviewModalVisible] = useState(false);
+  const [attachedImageUri, setAttachedImageUri] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [inputHeight, setInputHeight] = useState(40);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
@@ -141,8 +150,35 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
 
   const handleSend = async () => {
     const content = inputContent.trim();
-    if (!content || isSending) return;
+    const imageToSend = attachedImageUri;
+    if ((!content && !imageToSend) || isSending || isUploading) return;
 
+    // 1. If sending an image attachment
+    if (imageToSend) {
+      setIsUploading(true);
+      try {
+        const token = await getToken();
+        if (!token) throw new Error('Authentication required');
+        const newMsg = await sendChatMessage(conversation.id, content, token, imageToSend);
+        setMessages((prev) => [...prev, newMsg]);
+        setAttachedImageUri(null);
+        setInputContent('');
+      } catch (err: any) {
+        Alert.alert(
+          'Upload Failed',
+          'Could not send image attachment. Would you like to retry?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Retry', onPress: () => handleSend() },
+          ]
+        );
+      } finally {
+        setIsUploading(false);
+      }
+      return;
+    }
+
+    // 2. Text-only message
     setInputContent('');
     sendTyping(false);
 
@@ -166,30 +202,43 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
   };
 
   const handlePickAttachment = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      quality: 0.8,
-    });
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false, // Requirement 5: Do NOT open crop interface automatically!
+        quality: 0.9,
+      });
 
-    if (!result.canceled && result.assets[0]?.uri) {
-      setIsSending(true);
-      try {
-        const token = await getToken();
-        if (token) {
-          const newMsg = await sendChatMessage(
-            conversation.id,
-            '',
-            token,
-            result.assets[0].uri
-          );
-          setMessages((prev) => [...prev, newMsg]);
-        }
-      } catch (err: any) {
-        Alert.alert('Upload Failed', 'Could not send image attachment.');
-      } finally {
-        setIsSending(false);
+      if (!result.canceled && result.assets[0]?.uri) {
+        setSelectedImageUri(result.assets[0].uri);
+        setImagePreviewModalVisible(true);
       }
+    } catch {
+      Alert.alert('Error', 'Could not access image library.');
+    }
+  };
+
+  const handleOpenCrop = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true, // Only open crop interface when user explicitly taps Crop!
+        quality: 0.9,
+      });
+
+      if (!result.canceled && result.assets[0]?.uri) {
+        setSelectedImageUri(cropResultOr(result.assets[0].uri));
+      }
+    } catch {}
+  };
+
+  const cropResultOr = (uri: string) => uri;
+
+  const handleAttachImage = () => {
+    if (selectedImageUri) {
+      setAttachedImageUri(selectedImageUri);
+      setImagePreviewModalVisible(false);
+      setSelectedImageUri(null);
     }
   };
 
@@ -425,37 +474,134 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
         </Menu>
       )}
 
-      {/* Bottom Composer Bar */}
+      {/* Attached Image Preview in Composer before sending */}
+      {attachedImageUri && (
+        <View style={styles.attachedPreviewBar}>
+          <Image source={{ uri: attachedImageUri }} style={styles.attachedThumbnail} />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={styles.attachedTitle} numberOfLines={1}>
+              Image attached
+            </Text>
+            <Text style={styles.attachedSub}>Ready to send with your message</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.removeAttachedBtn}
+            onPress={() => setAttachedImageUri(null)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Feather name="x" size={18} color="#EF4444" />
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Uploading Progress Indicator */}
+      {isUploading && (
+        <View style={styles.uploadingBar}>
+          <ActivityIndicator size="small" color="#6B2FA0" />
+          <Text style={styles.uploadingText}>Uploading image...</Text>
+        </View>
+      )}
+
+      {/* Responsive Modern Bottom Composer Bar */}
       <View style={styles.composerBar}>
-        <IconButton
-          icon="paperclip"
-          iconColor="#6B2FA0"
-          size={24}
+        <TouchableOpacity
+          style={styles.attachBtn}
           onPress={handlePickAttachment}
-          disabled={isSending}
-        />
+          disabled={isSending || isUploading}
+          activeOpacity={0.7}
+        >
+          <Feather name="paperclip" size={22} color="#6B2FA0" />
+        </TouchableOpacity>
 
-        <TextInput
-          placeholder="Type a message..."
-          value={inputContent}
-          onChangeText={handleInputChange}
-          multiline
-          style={styles.textInput}
-          mode="outlined"
-          outlineColor="#E5E7EB"
-          activeOutlineColor="#6B2FA0"
-          dense
-        />
+        <View style={styles.inputContainer}>
+          <RNTextInput
+            placeholder="Type a message..."
+            placeholderTextColor="#94A3B8"
+            value={inputContent}
+            onChangeText={handleInputChange}
+            multiline
+            onContentSizeChange={(e) => {
+              const h = e.nativeEvent.contentSize.height;
+              setInputHeight(Math.min(120, Math.max(40, h)));
+            }}
+            style={[styles.modernInput, { height: Math.min(120, Math.max(40, inputHeight)) }]}
+          />
+        </View>
 
-        <IconButton
-          icon="send"
-          iconColor="#FFFFFF"
-          size={22}
-          containerColor="#6B2FA0"
+        <TouchableOpacity
+          style={[
+            styles.arrowSendBtn,
+            (!inputContent.trim() && !attachedImageUri) || isSending || isUploading
+              ? styles.sendBtnDisabled
+              : styles.sendBtnActive,
+          ]}
           onPress={handleSend}
-          disabled={!inputContent.trim() || isSending}
-        />
+          disabled={(!inputContent.trim() && !attachedImageUri) || isSending || isUploading}
+          activeOpacity={0.8}
+        >
+          {isSending || isUploading ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Feather name="send" size={18} color="#FFFFFF" style={{ marginLeft: 2 }} />
+          )}
+        </TouchableOpacity>
       </View>
+
+      {/* IMAGE ATTACHMENT PREVIEW MODAL */}
+      <Modal
+        visible={imagePreviewModalVisible && !!selectedImageUri}
+        animationType="fade"
+        transparent={false}
+        onRequestClose={() => {
+          setImagePreviewModalVisible(false);
+          setSelectedImageUri(null);
+        }}
+      >
+        <View style={styles.imagePreviewContainer}>
+          {/* Top Bar: Close on Left, Crop on Right */}
+          <View style={styles.imagePreviewHeader}>
+            <TouchableOpacity
+              onPress={() => {
+                setImagePreviewModalVisible(false);
+                setSelectedImageUri(null);
+              }}
+              style={styles.imageHeaderBtn}
+            >
+              <Feather name="x" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            <Text style={styles.imageHeaderTitle}>Photo Preview</Text>
+
+            <TouchableOpacity onPress={handleOpenCrop} style={styles.cropHeaderBtn}>
+              <Feather name="crop" size={18} color="#FFFFFF" />
+              <Text style={styles.cropBtnText}>Crop</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Centered Image Preview */}
+          <View style={styles.imagePreviewViewport}>
+            {selectedImageUri && (
+              <Image
+                source={{ uri: selectedImageUri }}
+                style={styles.previewFullImage}
+                contentFit="contain"
+              />
+            )}
+          </View>
+
+          {/* Bottom Bar: Add to message button */}
+          <View style={styles.imagePreviewFooter}>
+            <TouchableOpacity
+              style={styles.addAttachmentBtn}
+              onPress={handleAttachImage}
+              activeOpacity={0.8}
+            >
+              <Feather name="check" size={20} color="#FFFFFF" />
+              <Text style={styles.addAttachmentBtnText}>Add to Message</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Colleague Information Sheet */}
       <ColleagueProfileSheet
@@ -648,18 +794,156 @@ const styles = StyleSheet.create({
   },
   composerBar: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 8,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: '#E2E8F0',
+    gap: 8,
   },
-  textInput: {
+  attachBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+  },
+  inputContainer: {
     flex: 1,
-    maxHeight: 100,
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 4,
-    fontSize: 14,
+  },
+  modernInput: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    fontSize: 15,
+    color: '#1E293B',
+    lineHeight: 20,
+  },
+  arrowSendBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendBtnActive: {
+    backgroundColor: '#6B2FA0',
+  },
+  sendBtnDisabled: {
+    backgroundColor: '#CBD5E1',
+  },
+  attachedPreviewBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  attachedThumbnail: {
+    width: 46,
+    height: 46,
+    borderRadius: 8,
+  },
+  attachedTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  attachedSub: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  removeAttachedBtn: {
+    padding: 6,
+    borderRadius: 12,
+    backgroundColor: '#FEE2E2',
+  },
+  uploadingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FAF5FF',
+    paddingVertical: 6,
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E9D5FF',
+  },
+  uploadingText: {
+    fontSize: 12,
+    color: '#6B2FA0',
+    fontWeight: '600',
+  },
+  imagePreviewContainer: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+    paddingTop: Platform.OS === 'ios' ? 44 : 10,
+  },
+  imagePreviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E293B',
+  },
+  imageHeaderBtn: {
+    padding: 6,
+  },
+  imageHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  cropHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  cropBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  imagePreviewViewport: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  previewFullImage: {
+    width: '100%',
+    height: '100%',
+  },
+  imagePreviewFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#1E293B',
+    backgroundColor: '#0F172A',
+  },
+  addAttachmentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#6B2FA0',
+    paddingVertical: 14,
+    borderRadius: 14,
+    gap: 8,
+  },
+  addAttachmentBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });

@@ -29,9 +29,22 @@ from apps.communication.serializers import (
     EmployeeSearchSerializer,
     MessageSerializer,
     GroupSerializer,
+    AdminConversationListSerializer,
 )
 from apps.communication.email_service import send_admin_chat_notification_async
 from apps.common.push import send_push_notification
+
+
+def _is_admin_user(request, employee: Employee | None = None) -> bool:
+    role = getattr(request.user, "role", None)
+    if role == "ADMIN":
+        return True
+    email = getattr(request.user, "email", None)
+    if email and Admin.objects.filter(email__iexact=email).exists():
+        return True
+    if employee and getattr(employee, "employee_id", "") == "ADMIN":
+        return True
+    return False
 
 
 def _get_or_create_authenticated_employee(request) -> Employee | None:
@@ -63,12 +76,15 @@ def _get_or_create_authenticated_employee(request) -> Employee | None:
             },
         )
     else:
-        # 2. Check by employee_id
+        # 2. Check by employee_id string or PK
         employee_id = getattr(request.user, "employee_id", None)
         if employee_id:
-            emp = Employee.objects.filter(pk=employee_id, is_active=True).first()
+            if str(employee_id).isdigit():
+                emp = Employee.objects.filter(pk=int(employee_id), is_active=True).first()
+            if not emp:
+                emp = Employee.objects.filter(employee_id__iexact=str(employee_id).strip(), is_active=True).first()
         # 3. Check by email
-        elif email:
+        if not emp and email:
             emp = Employee.objects.filter(email__iexact=email, is_active=True).first()
 
     if emp:
@@ -627,18 +643,27 @@ class GroupListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """List all groups the user belongs to."""
+        """List all groups the user belongs to (or all active groups if admin)."""
         current_employee = _get_or_create_authenticated_employee(request)
         if not current_employee:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        is_admin = _is_admin_user(request, current_employee)
+        include_archived = request.query_params.get("archived", "false").lower() == "true"
+
+        qs = Conversation.objects.filter(type=Conversation.ConversationType.GROUP)
+        if not include_archived:
+            qs = qs.filter(is_archived=False)
+
+        if not is_admin:
+            # Employees only see groups they are members of
+            qs = qs.filter(members__employee=current_employee)
+
         groups = (
-            Conversation.objects.filter(
-                type=Conversation.ConversationType.GROUP,
-                members__employee=current_employee,
-            )
-            .prefetch_related('members__employee__presence', 'messages__sender')
+            qs.prefetch_related('members__employee__presence', 'messages__sender')
+            .select_related('created_by')
             .order_by('-updated_at')
+            .distinct()
         )
         serializer = GroupSerializer(groups, many=True, context={'current_employee': current_employee})
         return Response(serializer.data)
@@ -649,32 +674,40 @@ class GroupListCreateView(APIView):
         if not current_employee:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Only admin can create groups
-        if current_employee.employee_id != 'ADMIN':
-            return Response({"detail": "Only admin can create groups."}, status=status.HTTP_403_FORBIDDEN)
+        # Only authorized admin can create groups
+        if not _is_admin_user(request, current_employee):
+            return Response(
+                {"detail": "Access denied: Only administrators can create groups."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         group_name = request.data.get('group_name', '').strip()
         if not group_name:
             return Response({"detail": "group_name is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        group_description = request.data.get('group_description', '').strip()
         member_ids = request.data.get('member_ids', [])
-        if not member_ids:
-            return Response({"detail": "member_ids list is required."}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
             conversation = Conversation.objects.create(
                 type=Conversation.ConversationType.GROUP,
                 group_name=group_name,
+                group_description=group_description,
+                created_by=current_employee,
             )
-            # Add admin as member
+            # Add creator as member
             ConversationMember.objects.create(
                 conversation=conversation, employee=current_employee
             )
             # Add specified members
             for mid in member_ids:
-                emp = Employee.objects.filter(pk=mid, is_active=True).first()
+                emp = None
+                if str(mid).isdigit():
+                    emp = Employee.objects.filter(pk=int(mid), is_active=True).first()
+                if not emp:
+                    emp = Employee.objects.filter(employee_id__iexact=str(mid).strip(), is_active=True).first()
                 if emp and emp.pk != current_employee.pk:
-                    ConversationMember.objects.create(
+                    ConversationMember.objects.get_or_create(
                         conversation=conversation, employee=emp
                     )
 
@@ -692,24 +725,28 @@ class GroupDetailView(APIView):
 
         group = Conversation.objects.filter(
             pk=group_id, type=Conversation.ConversationType.GROUP
-        ).first()
+        ).select_related('created_by').first()
         if not group:
             return Response({"detail": "Group not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if not group.members.filter(employee=current_employee).exists():
+        is_admin = _is_admin_user(request, current_employee)
+        if not is_admin and not group.members.filter(employee=current_employee).exists():
             return Response({"detail": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = GroupSerializer(group, context={'current_employee': current_employee})
         return Response(serializer.data)
 
     def put(self, request, group_id: int):
-        """Update group (admin only): rename, add/remove members."""
+        """Update group (admin only): rename, description, archive, add/remove members."""
         current_employee = _get_or_create_authenticated_employee(request)
         if not current_employee:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if current_employee.employee_id != 'ADMIN':
-            return Response({"detail": "Only admin can modify groups."}, status=status.HTTP_403_FORBIDDEN)
+        if not _is_admin_user(request, current_employee):
+            return Response(
+                {"detail": "Access denied: Only administrators can modify groups."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         group = Conversation.objects.filter(
             pk=group_id, type=Conversation.ConversationType.GROUP
@@ -718,23 +755,165 @@ class GroupDetailView(APIView):
             return Response({"detail": "Group not found."}, status=status.HTTP_404_NOT_FOUND)
 
         new_name = request.data.get('group_name')
-        if new_name:
-            group.group_name = new_name.strip()
-            group.save(update_fields=['group_name'])
+        if new_name is not None and str(new_name).strip():
+            group.group_name = str(new_name).strip()
 
+        new_desc = request.data.get('group_description')
+        if new_desc is not None:
+            group.group_description = str(new_desc).strip()
+
+        if 'is_archived' in request.data:
+            group.is_archived = bool(request.data['is_archived'])
+
+        group.save(update_fields=['group_name', 'group_description', 'is_archived', 'updated_at'])
+
+        # Add members
         add_members = request.data.get('add_member_ids', [])
         for mid in add_members:
-            emp = Employee.objects.filter(pk=mid, is_active=True).first()
+            emp = None
+            if str(mid).isdigit():
+                emp = Employee.objects.filter(pk=int(mid), is_active=True).first()
+            if not emp:
+                emp = Employee.objects.filter(employee_id__iexact=str(mid).strip(), is_active=True).first()
             if emp:
                 ConversationMember.objects.get_or_create(
                     conversation=group, employee=emp
                 )
 
+        # Remove members
         remove_members = request.data.get('remove_member_ids', [])
         for mid in remove_members:
-            ConversationMember.objects.filter(
-                conversation=group, employee_id=mid
-            ).delete()
+            if str(mid).isdigit():
+                ConversationMember.objects.filter(
+                    conversation=group, employee_id=int(mid)
+                ).delete()
+            else:
+                ConversationMember.objects.filter(
+                    conversation=group, employee__employee_id__iexact=str(mid).strip()
+                ).delete()
 
         serializer = GroupSerializer(group, context={'current_employee': current_employee})
         return Response(serializer.data)
+
+    def delete(self, request, group_id: int):
+        """Archive or delete a group (admin only)."""
+        current_employee = _get_or_create_authenticated_employee(request)
+        if not current_employee:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not _is_admin_user(request, current_employee):
+            return Response(
+                {"detail": "Access denied: Only administrators can archive or delete groups."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        group = Conversation.objects.filter(
+            pk=group_id, type=Conversation.ConversationType.GROUP
+        ).first()
+        if not group:
+            return Response({"detail": "Group not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        permanent = request.query_params.get("permanent", "false").lower() == "true"
+        if permanent:
+            group.delete()
+            return Response({"status": "deleted", "group_id": group_id})
+        else:
+            group.is_archived = True
+            group.save(update_fields=["is_archived", "updated_at"])
+            return Response({"status": "archived", "group_id": group_id})
+
+
+class AdminEmployeeConversationsView(APIView):
+    """
+    Admin-Only Inspection View:
+    Returns all 1-to-1 conversations of a specific employee for monitoring.
+    Strictly read-only; does not modify messages or conversation state.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, employee_id: int):
+        current_employee = _get_or_create_authenticated_employee(request)
+        if not current_employee or not _is_admin_user(request, current_employee):
+            return Response(
+                {"detail": "Access denied: Administrator privileges required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        target_emp = Employee.objects.filter(pk=employee_id, is_active=True).first()
+        if not target_emp:
+            return Response(
+                {"detail": "Target employee not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Retrieve direct 1-to-1 conversations that include target_emp
+        conversations = (
+            Conversation.objects.filter(
+                type=Conversation.ConversationType.DIRECT,
+                members__employee=target_emp,
+            )
+            .prefetch_related("members__employee__presence", "messages__sender")
+            .order_by("-updated_at")
+            .distinct()
+        )
+
+        serializer = AdminConversationListSerializer(conversations, many=True)
+        return Response({
+            "employee": EmployeeSearchSerializer(target_emp).data,
+            "conversations": serializer.data,
+        })
+
+
+class AdminConversationMessagesView(APIView):
+    """
+    Admin-Only Inspection View:
+    Returns the message history of a conversation without marking messages as delivered or read.
+    Preserves audit integrity and does NOT notify participants.
+    """
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "head", "options"]
+
+    def get(self, request, conversation_id: int):
+        current_employee = _get_or_create_authenticated_employee(request)
+        if not current_employee or not _is_admin_user(request, current_employee):
+            return Response(
+                {"detail": "Access denied: Administrator privileges required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        conversation = (
+            Conversation.objects.filter(pk=conversation_id)
+            .prefetch_related("members__employee")
+            .first()
+        )
+        if not conversation:
+            return Response(
+                {"detail": "Conversation not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        limit = min(int(request.query_params.get("limit", 100)), 200)
+        messages = list(
+            conversation.messages.select_related("sender", "sender__presence")
+            .prefetch_related("reactions", "attachments")
+            .order_by("-created_at")[:limit]
+        )
+        messages.reverse()
+
+        # NOTE: Strictly read-only! We intentionally DO NOT update delivered_at or read_at.
+        serializer = MessageSerializer(
+            messages,
+            many=True,
+            context={"current_employee": None},
+        )
+
+        members = [EmployeeSearchSerializer(m.employee).data for m in conversation.members.all()]
+
+        return Response({
+            "conversation_id": conversation.id,
+            "type": conversation.type,
+            "group_name": conversation.group_name,
+            "members": members,
+            "messages": serializer.data,
+        })
+

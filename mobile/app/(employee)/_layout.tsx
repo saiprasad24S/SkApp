@@ -5,80 +5,184 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useAuth } from '@clerk/clerk-expo';
 import { useQuery } from '@tanstack/react-query';
+import { useAuthStore } from '../../src/store/authStore';
 import { useChatStore } from '../../src/store/chatStore';
 import { getConversations } from '../../src/api/chatApi';
 
 function PortalBottomNav({ state, descriptors, navigation }: any) {
   const insets = useSafeAreaInsets();
   const unreadCount = useChatStore((s: any) => s.unreadCount);
+  const activeConversationId = useChatStore((s: any) => s.activeConversationId);
+  const chatSectionTab = useChatStore((s: any) => s.chatSectionTab);
+  const setChatSectionTab = useChatStore((s: any) => s.setChatSectionTab);
 
-  const visibleRoutes = state.routes.filter((route: any) => {
-    const { options } = descriptors[route.key];
-    return options.href !== null;
-  });
+  const role = useAuthStore((s: any) => s.role);
+  const profile = useAuthStore((s: any) => s.profile);
+  const isAdmin = role === 'ADMIN' || profile?.employee_id === 'ADMIN';
 
-  return (
-    <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 6) }]}>
-      {visibleRoutes.map((route: any) => {
-        const { options } = descriptors[route.key];
-        const label =
-          options.tabBarLabel !== undefined
-            ? options.tabBarLabel
-            : options.title !== undefined
-            ? options.title
-            : route.name;
+  const currentRouteName = state.routes[state.index]?.name;
+  const isChatRoute = currentRouteName === 'chat';
 
-        const isFocused = state.index === state.routes.findIndex((r: any) => r.key === route.key);
+  // Inside an active chat room, hide bottom navigation so composer sits comfortably above keyboard
+  if (isChatRoute && activeConversationId) {
+    return null;
+  }
 
-        const onPress = () => {
-          const event = navigation.emit({
-            type: 'tabPress',
-            target: route.key,
-            canPreventDefault: true,
-          });
+  // 1. CHAT-SPECIFIC NAVIGATION BAR
+  if (isChatRoute) {
+    const chatNavButtons: Array<{
+      key: string;
+      label: string;
+      icon: any;
+      isFocused: boolean;
+      badge?: number;
+      onPress: () => void;
+    }> = [
+      {
+        key: 'chat-nav-home',
+        label: 'Home',
+        icon: 'home',
+        isFocused: false,
+        onPress: () => navigation.navigate('home'),
+      },
+      {
+        key: 'chat-nav-direct',
+        label: 'Chat',
+        icon: 'message-square',
+        isFocused: chatSectionTab === 'direct',
+        badge: unreadCount,
+        onPress: () => setChatSectionTab('direct'),
+      },
+      {
+        key: 'chat-nav-groups',
+        label: 'Groups',
+        icon: 'users',
+        isFocused: chatSectionTab === 'groups',
+        onPress: () => setChatSectionTab('groups'),
+      },
+    ];
 
-          if (!isFocused && !event.defaultPrevented) {
-            navigation.navigate(route.name);
-          }
-        };
+    if (isAdmin) {
+      chatNavButtons.push({
+        key: 'chat-nav-emp-chat',
+        label: 'Emp Chat',
+        icon: 'user-check',
+        isFocused: chatSectionTab === 'emp_chat',
+        onPress: () => setChatSectionTab('emp_chat'),
+      });
+    }
 
-        let iconName: any = 'home';
-        if (route.name === 'home') iconName = 'home';
-        else if (route.name === 'chat') iconName = 'message-square';
-        else if (route.name === 'attendance') iconName = 'clock';
-        else if (route.name === 'leaves') iconName = 'calendar';
-
-        return (
+    return (
+      <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 6) }]}>
+        {chatNavButtons.map((btn) => (
           <TouchableOpacity
-            key={route.key}
-            onPress={onPress}
+            key={btn.key}
+            onPress={btn.onPress}
             style={styles.navItem}
             activeOpacity={0.7}
           >
-            {isFocused && <View style={styles.navIndicator} />}
-            <View style={[styles.iconWrapper, isFocused && styles.iconWrapperActive]}>
+            {btn.isFocused && <View style={styles.navIndicator} />}
+            <View style={[styles.iconWrapper, btn.isFocused && styles.iconWrapperActive]}>
               <Feather
-                name={iconName}
+                name={btn.icon}
                 size={20}
-                color={isFocused ? '#6B2FA0' : '#64748b'}
+                color={btn.isFocused ? '#6B2FA0' : '#64748b'}
               />
-              {route.name === 'chat' && unreadCount > 0 && (
+              {btn.badge !== undefined && btn.badge > 0 && (
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>
-                    {unreadCount > 99 ? '99+' : unreadCount}
+                    {btn.badge > 99 ? '99+' : btn.badge}
                   </Text>
                 </View>
               )}
             </View>
             <Text
               numberOfLines={1}
-              style={[styles.navLabel, isFocused && styles.navLabelActive]}
+              style={[styles.navLabel, btn.isFocused && styles.navLabelActive]}
             >
-              {label}
+              {btn.label}
             </Text>
           </TouchableOpacity>
-        );
-      })}
+        ))}
+      </View>
+    );
+  }
+
+  // 2. STANDARD EMPLOYEE BOTTOM NAVIGATION BAR (Home, Chat, Attendance, Apply Leave)
+  const employeeNavButtons: Array<{
+    route: string;
+    label: string;
+    icon: any;
+    isFocused: boolean;
+    badge?: number;
+    onPress: () => void;
+  }> = [
+    {
+      route: 'home',
+      label: 'Home',
+      icon: 'home',
+      isFocused: currentRouteName === 'home',
+      onPress: () => navigation.navigate('home'),
+    },
+    {
+      route: 'chat',
+      label: 'Chat',
+      icon: 'message-square',
+      isFocused: currentRouteName === 'chat',
+      badge: unreadCount,
+      onPress: () => {
+        setChatSectionTab('direct');
+        navigation.navigate('chat');
+      },
+    },
+    {
+      route: 'attendance',
+      label: 'Attendance',
+      icon: 'clock',
+      isFocused: currentRouteName === 'attendance',
+      onPress: () => navigation.navigate('attendance'),
+    },
+    {
+      route: 'leaves',
+      label: 'Apply Leave',
+      icon: 'calendar',
+      isFocused: currentRouteName === 'leaves',
+      onPress: () => navigation.navigate('leaves'),
+    },
+  ];
+
+  return (
+    <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 6) }]}>
+      {employeeNavButtons.map((btn) => (
+        <TouchableOpacity
+          key={btn.route}
+          onPress={btn.onPress}
+          style={styles.navItem}
+          activeOpacity={0.7}
+        >
+          {btn.isFocused && <View style={styles.navIndicator} />}
+          <View style={[styles.iconWrapper, btn.isFocused && styles.iconWrapperActive]}>
+            <Feather
+              name={btn.icon}
+              size={20}
+              color={btn.isFocused ? '#6B2FA0' : '#64748b'}
+            />
+            {btn.badge !== undefined && btn.badge > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>
+                  {btn.badge > 99 ? '99+' : btn.badge}
+                </Text>
+              </View>
+            )}
+          </View>
+          <Text
+            numberOfLines={1}
+            style={[styles.navLabel, btn.isFocused && styles.navLabelActive]}
+          >
+            {btn.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
     </View>
   );
 }
@@ -100,6 +204,7 @@ export default function EmployeeLayout() {
       setUnreadCount(totalUnread);
       return convs;
     },
+    staleTime: 10000,
     refetchInterval: 15000,
   });
 
@@ -114,8 +219,8 @@ export default function EmployeeLayout() {
       }
     };
 
-    BackHandler.addEventListener('hardwareBackPress', onBackPress);
-    return () => BackHandler.removeEventListener('hardwareBackPress', onBackPress);
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
   }, [pathname, router]);
 
   return (
