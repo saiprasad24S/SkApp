@@ -56,44 +56,7 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
   const [selectedMsg, setSelectedMsg] = useState<ChatMessage | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
 
-  // Fetch initial message history with 2s polling fallback when offline/no-ws
-  const { data: initialMessages = [], isLoading } = useQuery({
-    queryKey: ['chat-messages', conversation.id],
-    queryFn: async () => {
-      const token = await getToken();
-      if (!token) return [];
-      return getConversationMessages(conversation.id, token);
-    },
-    refetchInterval: 2000,
-  });
-
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-
-  useEffect(() => {
-    if (initialMessages.length > 0) {
-      setMessages((prev) => {
-        if (prev.length === 0) return initialMessages;
-        if (initialMessages.length !== prev.length) return initialMessages;
-        const lastInit = initialMessages[initialMessages.length - 1];
-        const lastPrev = prev[prev.length - 1];
-        if (lastInit?.id !== lastPrev?.id || lastInit?.status !== lastPrev?.status) {
-          return initialMessages;
-        }
-        return prev;
-      });
-    }
-  }, [initialMessages]);
-
-  // Mark conversation read on mount
-  useEffect(() => {
-    const markRead = async () => {
-      try {
-        const token = await getToken();
-        if (token) await markConversationAsRead(conversation.id, token);
-      } catch {}
-    };
-    markRead();
-  }, [conversation.id, getToken]);
 
   // WebSocket callbacks
   const handleNewMessage = useCallback((msg: ChatMessage) => {
@@ -132,6 +95,43 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
     onTyping: handleTypingEvent,
     onReadReceipt: handleReadReceipt,
   });
+
+  // Fetch initial message history with 5s polling fallback when offline/no-ws
+  const { data: initialMessages = [], isLoading } = useQuery({
+    queryKey: ['chat-messages', conversation.id],
+    queryFn: async () => {
+      const token = await getToken();
+      if (!token) return [];
+      return getConversationMessages(conversation.id, token);
+    },
+    refetchInterval: isConnected ? false : 5000,
+  });
+
+  useEffect(() => {
+    if (initialMessages.length > 0) {
+      setMessages((prev) => {
+        if (prev.length === 0) return initialMessages;
+        if (initialMessages.length !== prev.length) return initialMessages;
+        const lastInit = initialMessages[initialMessages.length - 1];
+        const lastPrev = prev[prev.length - 1];
+        if (lastInit?.id !== lastPrev?.id || lastInit?.status !== lastPrev?.status) {
+          return initialMessages;
+        }
+        return prev;
+      });
+    }
+  }, [initialMessages]);
+
+  // Mark conversation read on mount
+  useEffect(() => {
+    const markRead = async () => {
+      try {
+        const token = await getToken();
+        if (token) await markConversationAsRead(conversation.id, token);
+      } catch {}
+    };
+    markRead();
+  }, [conversation.id, getToken]);
 
   // Handle typing debounce
   const handleInputChange = (text: string) => {
