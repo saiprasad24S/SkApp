@@ -6,6 +6,7 @@ import { authedFetch, API_BASE_URL } from '../lib/api'
 import { safeStorage } from '../lib/storage'
 import { ChatContainer } from '../components/chat/ChatContainer'
 import { getUnreadCount } from '../components/chat/chatApi'
+import { FestivalsAndEventsSection } from '../components/FestivalsAndEventsSection'
 
 function formatRelativeTime(dateStr: string) {
   try {
@@ -1893,6 +1894,12 @@ export function EmployeePortal() {
                 })}
               </div>
             </div>
+
+            {/* Festivals & Events Section directly below Attendance Calendar */}
+            <FestivalsAndEventsSection
+              year={calendarYear}
+              month={calendarMonth}
+            />
           </div>
         )}
 

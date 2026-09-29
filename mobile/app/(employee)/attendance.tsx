@@ -16,6 +16,7 @@ import Svg, { Circle } from 'react-native-svg';
 import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { getAttendanceHistory } from '../../src/api/attendanceApi';
+import FestivalsAndEventsSection from '../../src/components/attendance/FestivalsAndEventsSection';
 
 const AttendanceMiniPieChart = memo(function AttendanceMiniPieChart({
   present,
@@ -340,6 +341,12 @@ export default function AttendanceScreen() {
             </View>
           )}
         </View>
+
+        {/* Festivals & Events Section directly below Attendance Calendar */}
+        <FestivalsAndEventsSection
+          year={calendarYear}
+          month={calendarMonth}
+        />
       </ScrollView>
     </SafeAreaView>
   );

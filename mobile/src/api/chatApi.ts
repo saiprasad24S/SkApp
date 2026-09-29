@@ -248,3 +248,27 @@ export async function getAdminConversationMessages(
   return res.json();
 }
 
+export interface ConversationPresenceResponse {
+  conversation_id: number;
+  type: 'DIRECT' | 'GROUP';
+  employee_id?: number;
+  name?: string;
+  is_online?: boolean;
+  last_seen_at?: string | null;
+  group_name?: string;
+  group_description?: string;
+  member_count?: number;
+}
+
+export async function getConversationPresence(
+  conversationId: number,
+  token: string
+): Promise<ConversationPresenceResponse> {
+  const res = await authedFetch(
+    `/api/communication/conversations/${conversationId}/presence/`,
+    token
+  );
+  return res.json();
+}
+
+

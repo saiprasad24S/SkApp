@@ -9,6 +9,7 @@ interface UseWebSocketOptions {
   onNewMessage?: (msg: ChatMessage) => void;
   onTyping?: (data: { employee_id: number; name: string; is_typing: boolean }) => void;
   onReadReceipt?: (data: { employee_id: number; conversation_id: number }) => void;
+  onPresence?: (data: { employee_id: number; is_online: boolean; last_seen_at?: string | null }) => void;
 }
 
 export function useWebSocket({
@@ -16,6 +17,7 @@ export function useWebSocket({
   onNewMessage,
   onTyping,
   onReadReceipt,
+  onPresence,
 }: UseWebSocketOptions) {
   const { getToken } = useAuth();
   const socketRef = useRef<WebSocket | null>(null);
@@ -23,10 +25,10 @@ export function useWebSocket({
   const isExplicitCloseRef = useRef(false);
   const isConnectingRef = useRef(false);
 
-  const callbacksRef = useRef({ onNewMessage, onTyping, onReadReceipt });
+  const callbacksRef = useRef({ onNewMessage, onTyping, onReadReceipt, onPresence });
   useEffect(() => {
-    callbacksRef.current = { onNewMessage, onTyping, onReadReceipt };
-  }, [onNewMessage, onTyping, onReadReceipt]);
+    callbacksRef.current = { onNewMessage, onTyping, onReadReceipt, onPresence };
+  }, [onNewMessage, onTyping, onReadReceipt, onPresence]);
 
   const setWebSocketConnected = useChatStore((state) => state.setWebSocketConnected);
   const [isConnected, setIsConnected] = useState(false);
@@ -67,6 +69,8 @@ export function useWebSocket({
             callbacksRef.current.onTyping?.(data);
           } else if (data.type === 'read_receipt') {
             callbacksRef.current.onReadReceipt?.(data);
+          } else if (data.type === 'presence') {
+            callbacksRef.current.onPresence?.(data);
           }
         } catch (err) {
           // ignore parsing error

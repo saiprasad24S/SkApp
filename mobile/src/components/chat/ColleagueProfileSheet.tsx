@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet, View, Modal, Clipboard, ToastAndroid } from 'react-native';
 import { Text, Avatar, IconButton, Button, Card, Divider } from 'react-native-paper';
 import { EmployeeSearchResult } from '../../types/chat';
+import { formatLastSeen } from '../../utils/timeFormat';
 
 interface ColleagueProfileSheetProps {
   visible: boolean;
@@ -71,9 +72,7 @@ export default function ColleagueProfileSheet({
               >
                 {isOnline
                   ? 'Active Now'
-                  : employee.last_seen_at
-                  ? `Last seen ${new Date(employee.last_seen_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                  : 'Offline'}
+                  : formatLastSeen(employee.last_seen_at)}
               </Text>
             </View>
 

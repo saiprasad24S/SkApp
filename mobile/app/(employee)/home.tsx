@@ -22,6 +22,7 @@ import CheckInModal from '../../src/components/CheckInModal';
 import NotificationSheet from '../../src/components/NotificationSheet';
 import { useLocationTracker } from '../../src/hooks/useLocationTracker';
 import * as Location from 'expo-location';
+import GradientAvatar from '../../src/components/common/GradientAvatar';
 
 const DigitalClockCard = memo(function DigitalClockCard() {
   const [time, setTime] = useState(() => new Date());
@@ -274,12 +275,14 @@ export default function HomeScreen() {
 
         {/* Employee Profile Card matching .employee-card in global.css */}
         <View style={styles.employeeCard}>
-          <View style={styles.avatarWrapper}>
-            <Image
-              source={{ uri: avatarUrl }}
-              style={styles.avatarImage}
-            />
-          </View>
+          <GradientAvatar
+            uri={avatarUrl}
+            name={displayName}
+            size={112}
+            strokeWidth={3.8}
+            innerSpacing={3}
+            style={{ marginBottom: 14 }}
+          />
           <Text style={styles.employeeName}>{displayName}</Text>
           <Text style={styles.employeeDesignation}>{profile?.designation || 'Healthcare Professional'}</Text>
           <Text style={styles.employeeDepartment}>{profile?.department || 'General'} Department</Text>
@@ -309,13 +312,7 @@ export default function HomeScreen() {
                 <Text style={styles.patientAddress}>{assignment.patient_address}</Text>
               </View>
             </View>
-          ) : (
-            <View style={styles.assignmentBox}>
-              <Text style={styles.noAssignmentText}>
-                No field patient visits assigned for today. Attendance matches clinic headquarters.
-              </Text>
-            </View>
-          )}
+          ) : null}
 
           {/* Location Permission Warning if not granted */}
           {locationPermGranted === false && (
@@ -427,8 +424,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerLogo: {
-    width: 140,
-    height: 36,
+    width: 155,
+    height: 46,
   },
   headerActions: {
     flexDirection: 'row',

@@ -15,6 +15,7 @@ from apps.communication.views import (
     GroupDetailView,
     AdminEmployeeConversationsView,
     AdminConversationMessagesView,
+    ConversationPresenceView,
 )
 
 urlpatterns = [
@@ -26,6 +27,8 @@ urlpatterns = [
     path("conversations/<int:conversation_id>/messages", ConversationMessageListView.as_view()),
     path("conversations/<int:conversation_id>/read/", ConversationReadView.as_view(), name="communication-conversation-read"),
     path("conversations/<int:conversation_id>/read", ConversationReadView.as_view()),
+    path("conversations/<int:conversation_id>/presence/", ConversationPresenceView.as_view(), name="communication-conversation-presence"),
+    path("conversations/<int:conversation_id>/presence", ConversationPresenceView.as_view()),
     path("conversations/<int:conversation_id>/typing/", TypingStatusView.as_view(), name="communication-conversation-typing"),
     path("conversations/<int:conversation_id>/typing", TypingStatusView.as_view()),
     path("messages/<int:message_id>/", MessageDeleteView.as_view(), name="communication-message-delete"),

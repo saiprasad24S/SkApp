@@ -561,6 +561,61 @@ class PresenceHeartbeatView(APIView):
         return Response({"status": "online"})
 
 
+class ConversationPresenceView(APIView):
+    """
+    Returns up-to-the-second presence and last_seen_at for participants of a conversation.
+    Strictly restricted to authorized participants or admins.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, conversation_id):
+        current_employee = _get_or_create_authenticated_employee(request)
+        if not current_employee:
+            return Response({"detail": "Employee profile required"}, status=status.HTTP_403_FORBIDDEN)
+
+        is_admin = _is_admin_user(current_employee, request.user)
+        conversation = Conversation.objects.filter(id=conversation_id).first()
+        if not conversation:
+            return Response({"detail": "Conversation not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not is_admin and not conversation.members.filter(employee=current_employee).exists():
+            return Response({"detail": "Not a participant in this conversation"}, status=status.HTTP_403_FORBIDDEN)
+
+        if conversation.type == Conversation.ConversationType.GROUP:
+            return Response({
+                "conversation_id": conversation.id,
+                "type": "GROUP",
+                "group_name": conversation.group_name,
+                "group_description": conversation.group_description,
+                "member_count": conversation.members.count(),
+            })
+
+        other_emp = conversation.get_other_member(current_employee)
+        if not other_emp:
+            return Response({
+                "conversation_id": conversation.id,
+                "type": "DIRECT",
+                "is_online": False,
+                "last_seen_at": None,
+            })
+
+        presence = getattr(other_emp, "presence", None)
+        if not presence:
+            presence = EmployeePresence.objects.filter(employee=other_emp).first()
+
+        is_online = presence.is_online if presence else False
+        last_seen_at = presence.last_seen_at.isoformat() if presence and presence.last_seen_at else None
+
+        return Response({
+            "conversation_id": conversation.id,
+            "type": "DIRECT",
+            "employee_id": other_emp.id,
+            "name": other_emp.name,
+            "is_online": is_online,
+            "last_seen_at": last_seen_at,
+        })
+
+
 class UnreadCountView(APIView):
     permission_classes = [IsAuthenticated]
 

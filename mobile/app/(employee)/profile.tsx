@@ -8,6 +8,7 @@ import Constants from 'expo-constants';
 
 import { useAuthStore } from '../../src/store/authStore';
 import { logoutFromBackend } from '../../src/lib/auth';
+import GradientAvatar from '../../src/components/common/GradientAvatar';
 
 export default function ProfileScreen() {
   const { signOut, getToken } = useAuth();
@@ -54,7 +55,14 @@ export default function ProfileScreen() {
       
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.profileSection}>
-          <Avatar.Text size={80} label={(profile?.name || 'Employee').substring(0, 2).toUpperCase()} style={styles.avatar} />
+          <GradientAvatar
+            uri={profile?.profile_photo}
+            name={profile?.name}
+            size={92}
+            strokeWidth={3.5}
+            innerSpacing={2.5}
+            style={{ marginBottom: 12 }}
+          />
           <Text style={styles.name}>{profile?.name || 'Employee'}</Text>
           <Text style={styles.designation}>{profile?.designation || 'Staff'}</Text>
           <Text style={styles.department}>{profile?.department || 'Department'}</Text>

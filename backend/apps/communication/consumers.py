@@ -31,9 +31,30 @@ class ChatConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.accept()
         logger.info(f"[WS] Employee {self.employee.name} connected to {self.room_group_name}")
+        await self.update_presence(self.employee.id)
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "presence_status",
+                "employee_id": self.employee.id,
+                "is_online": True,
+                "last_seen_at": timezone.now().isoformat(),
+            },
+        )
 
     async def disconnect(self, close_code):
         if hasattr(self, "room_group_name"):
+            if hasattr(self, "employee") and self.employee:
+                await self.update_presence(self.employee.id)
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        "type": "presence_status",
+                        "employee_id": self.employee.id,
+                        "is_online": False,
+                        "last_seen_at": timezone.now().isoformat(),
+                    },
+                )
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def receive(self, text_data):
@@ -101,6 +122,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
             "employee_id": event["employee_id"],
             "conversation_id": event["conversation_id"],
         }))
+
+    async def presence_status(self, event):
+        if hasattr(self, "employee") and self.employee and event["employee_id"] != self.employee.id:
+            await self.send(text_data=json.dumps({
+                "type": "presence",
+                "employee_id": event["employee_id"],
+                "is_online": event["is_online"],
+                "last_seen_at": event.get("last_seen_at"),
+            }))
+
+    @database_sync_to_async
+    def update_presence(self, employee_id):
+        try:
+            EmployeePresence.objects.update_or_create(
+                employee_id=employee_id,
+                defaults={"last_seen_at": timezone.now()},
+            )
+        except Exception as e:
+            logger.warning(f"Error updating presence for {employee_id}: {e}")
 
     @database_sync_to_async
     def check_membership(self, conversation_id, employee_id):

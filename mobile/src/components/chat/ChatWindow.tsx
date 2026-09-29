@@ -31,10 +31,12 @@ import {
   markConversationAsRead,
   deleteChatMessage,
   toggleReaction,
+  getConversationPresence,
 } from '../../api/chatApi';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { ConversationItem, ChatMessage } from '../../types/chat';
 import ColleagueProfileSheet from './ColleagueProfileSheet';
+import { formatLastSeen } from '../../utils/timeFormat';
 
 interface ChatWindowProps {
   conversation: ConversationItem;
@@ -97,12 +99,64 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
     );
   }, []);
 
+  // Presence State & Sync
+  const [partnerOnline, setPartnerOnline] = useState<boolean>(
+    Boolean(conversation.other_member?.is_online)
+  );
+  const [partnerLastSeen, setPartnerLastSeen] = useState<string | null | undefined>(
+    conversation.other_member?.last_seen_at
+  );
+
+  useEffect(() => {
+    setPartnerOnline(Boolean(conversation.other_member?.is_online));
+    setPartnerLastSeen(conversation.other_member?.last_seen_at);
+  }, [conversation.id, conversation.other_member?.is_online, conversation.other_member?.last_seen_at]);
+
+  // Query conversation presence initially & periodic background refresh
+  const { data: presenceData } = useQuery({
+    queryKey: ['conversation-presence', conversation.id],
+    queryFn: async () => {
+      const token = await getToken();
+      if (!token) return null;
+      return getConversationPresence(conversation.id, token);
+    },
+    enabled: conversation.type === 'DIRECT',
+    refetchInterval: 30000,
+  });
+
+  useEffect(() => {
+    if (presenceData && conversation.type === 'DIRECT') {
+      if (typeof presenceData.is_online === 'boolean') {
+        setPartnerOnline(presenceData.is_online);
+      }
+      if (presenceData.last_seen_at !== undefined) {
+        setPartnerLastSeen(presenceData.last_seen_at);
+      }
+    }
+  }, [presenceData, conversation.type]);
+
+  const handlePresenceEvent = useCallback(
+    (data: { employee_id: number; is_online: boolean; last_seen_at?: string | null }) => {
+      if (
+        conversation.type === 'DIRECT' &&
+        (!conversation.other_member?.id || conversation.other_member.id === data.employee_id)
+      ) {
+        setPartnerOnline(data.is_online);
+        if (data.last_seen_at !== undefined) {
+          setPartnerLastSeen(data.last_seen_at);
+        }
+      }
+    },
+    [conversation.type, conversation.other_member?.id]
+  );
+
   // Hook WebSocket connection
   const { isConnected, sendMessage: wsSend, sendTyping } = useWebSocket({
     conversationId: conversation.id,
     onNewMessage: handleNewMessage,
     onTyping: handleTypingEvent,
     onReadReceipt: handleReadReceipt,
+    onPresence: handlePresenceEvent,
   });
 
   // Fetch initial message history with 5s polling fallback when offline/no-ws
@@ -286,7 +340,18 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
     conversation.type === 'GROUP'
       ? conversation.group_name || 'Group Chat'
       : conversation.other_member?.name || 'Colleague';
-  const isOnline = conversation.other_member?.is_online;
+  const isOnline = conversation.type === 'DIRECT' ? partnerOnline : false;
+
+  const getSubtitle = () => {
+    if (conversation.type === 'GROUP') {
+      const count = conversation.members?.length || 0;
+      return `${count} ${count === 1 ? 'member' : 'members'}${isConnected ? ' • Realtime' : ''}`;
+    }
+    if (isOnline) {
+      return `Online${isConnected ? ' • Realtime' : ''}`;
+    }
+    return formatLastSeen(partnerLastSeen);
+  };
 
   // Inverted FlatList requires array in reverse order (newest first)
   const invertedMessages = [...messages].reverse();
@@ -316,9 +381,8 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
             <Text style={styles.headerTitle} numberOfLines={1}>
               {title}
             </Text>
-            <Text style={styles.headerStatus}>
-              {isOnline ? 'Online' : 'Offline'}
-              {isConnected && ' • Realtime'}
+            <Text style={styles.headerStatus} numberOfLines={1}>
+              {getSubtitle()}
             </Text>
           </View>
         </TouchableOpacity>
@@ -607,7 +671,15 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
       <ColleagueProfileSheet
         visible={profileVisible}
         onClose={() => setProfileVisible(false)}
-        employee={conversation.other_member || null}
+        employee={
+          conversation.other_member
+            ? {
+                ...conversation.other_member,
+                is_online: isOnline,
+                last_seen_at: partnerLastSeen || conversation.other_member.last_seen_at,
+              }
+            : null
+        }
       />
     </KeyboardAvoidingView>
   );
