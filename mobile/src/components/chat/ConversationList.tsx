@@ -328,10 +328,10 @@ export default function ConversationList({ onSelectConversation }: ConversationL
             <View style={styles.metaRow}>
               <Text style={styles.metaId}>{partner.employee_id}</Text>
               {partner.department ? (
-                <Text style={styles.metaDept}> \u2022 {partner.department}</Text>
+                <Text style={styles.metaDept}> • {partner.department}</Text>
               ) : null}
               {isOnline ? (
-                <Text style={styles.metaOnline}> \u2022 Available</Text>
+                <Text style={styles.metaOnline}> • Available</Text>
               ) : null}
             </View>
           )}
