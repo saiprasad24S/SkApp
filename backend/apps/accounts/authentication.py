@@ -148,7 +148,7 @@ class ClerkJWTAuthentication(BaseAuthentication):
                 token,
                 signing_key,
                 algorithms=["RS256"],
-                leeway=120,
+                leeway=300,
                 options={"verify_aud": False, "verify_iss": False},
             )
         except AuthenticationFailed:

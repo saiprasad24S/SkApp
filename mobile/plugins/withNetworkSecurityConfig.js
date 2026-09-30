@@ -27,10 +27,11 @@ const withNetworkSecurityConfig = (config) => {
     },
   ]);
 
-  // 2. Add android:networkSecurityConfig="@xml/network_security_config" to AndroidManifest.xml
+  // 2. Add android:networkSecurityConfig="@xml/network_security_config" and usesCleartextTraffic to AndroidManifest.xml
   config = withAndroidManifest(config, (config) => {
     const mainApplication = AndroidConfig.Manifest.getMainApplicationOrThrow(config.modResults);
     mainApplication.$['android:networkSecurityConfig'] = '@xml/network_security_config';
+    mainApplication.$['android:usesCleartextTraffic'] = 'true';
     return config;
   });
 

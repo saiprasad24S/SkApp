@@ -12,6 +12,7 @@ import { theme } from '../src/theme';
 import ErrorBoundary from '../src/components/ErrorBoundary';
 import NetworkBanner from '../src/components/NetworkBanner';
 import { registerForPushNotificationsAsync, setupPushTokenListener } from '../src/lib/notifications';
+import { registerTokenProvider } from '../src/lib/api';
 
 // DO NOT call SplashScreen.preventAutoHideAsync()!
 // Allowing standard Expo splash lifecycle ensures native Android automatically
@@ -65,7 +66,11 @@ const tokenCache = {
   },
 };
 
-const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test_bm9ibGUtdmVydmV0LTYyLmNsZXJrLmFjY291bnRzLmRldiQ';
+const rawClerkKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+const publishableKey =
+  rawClerkKey && !rawClerkKey.includes('REPLACE_WITH')
+    ? rawClerkKey
+    : 'pk_test_bm9ibGUtdmVydmV0LTYyLmNsZXJrLmFjY291bnRzLmRldiQ';
 
 function InitialLayout() {
   const { isLoaded, isSignedIn, getToken } = useAuth();
@@ -76,6 +81,18 @@ function InitialLayout() {
   useEffect(() => {
     console.log(`[Startup] InitialLayout mounted: isLoaded=${isLoaded}, isSignedIn=${isSignedIn}`);
   }, [isLoaded, isSignedIn]);
+
+  // Register active token provider for automatic 401/403 retry across all API calls
+  useEffect(() => {
+    registerTokenProvider(async (skipCache = false) => {
+      try {
+        return await getToken(skipCache ? ({ skipCache: true } as any) : undefined);
+      } catch {
+        return null;
+      }
+    });
+    return () => registerTokenProvider(null);
+  }, [getToken]);
 
   // Auth routing: redirect to home if signed in, or to sign-in if not signed in
   useEffect(() => {
