@@ -18,6 +18,7 @@ import { useAuthStore } from '../../src/store/authStore';
 import { getTodayAssignment } from '../../src/api/employeeApi';
 import { getNotifications } from '../../src/api/notificationApi';
 import { loginToBackend } from '../../src/lib/auth';
+import { autoDetectServer } from '../../src/lib/api';
 import CheckInModal from '../../src/components/CheckInModal';
 import NotificationSheet from '../../src/components/NotificationSheet';
 import { useLocationTracker } from '../../src/hooks/useLocationTracker';
@@ -266,9 +267,18 @@ export default function HomeScreen() {
                 {(profileError as any)?.message || 'Unable to sync with Skandan server.'}
               </Text>
             </View>
-            <TouchableOpacity style={styles.retryButton} onPress={() => refetchProfile()}>
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={async () => {
+                try {
+                  await autoDetectServer();
+                } catch {}
+                refetchProfile();
+                refetchAssignment();
+              }}
+            >
               <Feather name="rotate-ccw" size={12} color="#FFFFFF" style={{ marginRight: 4 }} />
-              <Text style={styles.retryButtonText}>Retry</Text>
+              <Text style={styles.retryButtonText}>Auto-Connect</Text>
             </TouchableOpacity>
           </View>
         )}

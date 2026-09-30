@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAuth } from '@clerk/clerk-expo';
-import { WS_BASE_URL } from '../lib/api';
+import { getWsBaseUrl } from '../lib/api';
 import { useChatStore } from '../store/chatStore';
 import { ChatMessage } from '../types/chat';
 
@@ -51,7 +51,7 @@ export function useWebSocket({
         socketRef.current = null;
       }
 
-      const wsUrl = `${WS_BASE_URL}/ws/chat/${conversationId}/?token=${encodeURIComponent(token)}`;
+      const wsUrl = `${getWsBaseUrl()}/ws/chat/${conversationId}/?token=${encodeURIComponent(token)}`;
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
