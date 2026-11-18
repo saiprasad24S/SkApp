@@ -233,6 +233,16 @@ CORS_ALLOW_METHODS = list(default_methods) + [
     "PUT",
 ]
 
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in _env(
+        "CSRF_TRUSTED_ORIGINS",
+        default="https://employees.skandanhomecarrecclinic.com,http://employees.skandanhomecarrecclinic.com,http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "apps.accounts.authentication.ClerkJWTAuthentication",

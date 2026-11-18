@@ -3,6 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const STORAGE_KEY = '@skandan_api_base_url';
 
 export const CANDIDATE_HOSTS = [
+  'https://employees.skandanhomecarrecclinic.com',
+  'http://192.168.1.24:8000',
   'http://192.168.1.13:8000',
   'http://192.168.29.150:8000',
   'http://10.0.2.2:8000',
@@ -10,10 +12,9 @@ export const CANDIDATE_HOSTS = [
 ];
 
 const rawApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
-const INITIAL_BASE =
-  rawApiBase && !rawApiBase.includes('skandanhomecarre.com')
-    ? rawApiBase
-    : 'http://192.168.1.13:8000';
+const INITIAL_BASE = rawApiBase
+  ? rawApiBase
+  : 'https://employees.skandanhomecarrecclinic.com';
 
 export let API_BASE_URL = INITIAL_BASE;
 export let WS_BASE_URL = INITIAL_BASE.replace(/^http/, 'ws');
