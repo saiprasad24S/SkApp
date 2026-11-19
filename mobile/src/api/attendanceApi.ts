@@ -97,7 +97,18 @@ export async function getMonthlyAttendance(
   year: number,
   month: number,
   token: string
-): Promise<{ days: MonthlyAttendanceDay[]; present_count: number; absent_count: number }> {
+): Promise<{
+  employee_id: string;
+  employee_name: string;
+  year: number;
+  month: number;
+  month_name: string;
+  starting_day_of_week: number;
+  total_days: number;
+  present_count: number;
+  unmarked_count: number;
+  days: MonthlyAttendanceDay[];
+}> {
   const res = await authedFetch(
     `/api/attendance/employee-month?employee_id=${employeeId}&year=${year}&month=${month}`,
     token

@@ -7,7 +7,6 @@ import {
   ScrollView,
   RefreshControl,
   ActivityIndicator,
-  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -15,7 +14,7 @@ import { useAuth } from '@clerk/clerk-expo';
 import Svg, { Circle } from 'react-native-svg';
 import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
-import { getAttendanceHistory } from '../../src/api/attendanceApi';
+import { getMonthlyAttendance } from '../../src/api/attendanceApi';
 import FestivalsAndEventsSection from '../../src/components/attendance/FestivalsAndEventsSection';
 
 const AttendanceMiniPieChart = memo(function AttendanceMiniPieChart({
@@ -104,7 +103,6 @@ export default function AttendanceScreen() {
 
   const profile = useAuthStore((state) => state.profile);
   const isSessionActive = useAuthStore((state) => state.isSessionActive);
-  const activeSession = useAuthStore((state) => state.activeSession);
 
   // Month navigation state
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
@@ -131,14 +129,30 @@ export default function AttendanceScreen() {
     });
   }, []);
 
-  // Fetch employee attendance history
-  const { data: attendanceHistory, isLoading, refetch } = useQuery({
-    queryKey: ['employee-attendance-history', profile?.employee_id],
+  // Use the efficient month-based API endpoint instead of fetching all records
+  const {
+    data: monthData,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
+    queryKey: ['employee-month-attendance', profile?.id, calendarYear, calendarMonth + 1],
     queryFn: async () => {
       const token = await getToken();
-      if (!token) return [];
-      return getAttendanceHistory(token);
+      if (!token) throw new Error('Authentication required');
+      if (!profile?.id) throw new Error('Profile not loaded');
+      return getMonthlyAttendance(
+        profile.id,
+        calendarYear,
+        calendarMonth + 1, // API uses 1-based months
+        token
+      );
     },
+    enabled: !!profile?.id,
+    staleTime: 1000 * 60 * 2,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   });
 
   const onRefresh = async () => {
@@ -155,19 +169,22 @@ export default function AttendanceScreen() {
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
 
-    const startingDayOfWeek = firstDay.getDay();
-    const totalDays = lastDay.getDate();
+    const startingDayOfWeek = monthData?.starting_day_of_week ?? firstDay.getDay();
+    const totalDays = monthData?.total_days ?? lastDay.getDate();
 
-    const records = attendanceHistory ?? [];
-    const presentDates = new Set(
-      records.map((r: any) => {
-        const dtStr = r.session_login_time || r.timestamp || r.created_at || r.login_time;
-        return new Date(dtStr).toDateString();
-      })
-    );
+    // Build a set of present dates from the monthly API response
+    const presentDates = new Set<number>();
+    if (monthData?.days) {
+      for (const day of monthData.days) {
+        if (day.status === 'PRESENT') {
+          presentDates.add(day.day_number);
+        }
+      }
+    }
 
-    const viewDate = new Date(year, month, 1);
-    const monthName = viewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const monthName =
+      monthData?.month_name ??
+      new Date(year, month, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     const isCurrentMonth = year === now.getFullYear() && month === now.getMonth();
 
     const days: ({
@@ -176,6 +193,9 @@ export default function AttendanceScreen() {
       isToday: boolean;
       isPast: boolean;
       isPresent: boolean;
+      checkIn?: string | null;
+      checkOut?: string | null;
+      totalHours?: string | null;
     } | null)[] = [];
 
     for (let i = 0; i < startingDayOfWeek; i++) {
@@ -189,7 +209,10 @@ export default function AttendanceScreen() {
       const isPast = d < new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
       const isCheckedInToday = isCurrentMonth && isToday && Boolean(isSessionActive);
-      const isPresent = presentDates.has(dateStr) || (isToday && (isCheckedInToday || presentDates.has(dateStr)));
+      const isPresent = presentDates.has(day) || (isToday && isCheckedInToday);
+
+      // Get detailed info from API response
+      const dayInfo = monthData?.days?.find((dd: any) => dd.day_number === day);
 
       days.push({
         dayNumber: day,
@@ -197,18 +220,33 @@ export default function AttendanceScreen() {
         isToday,
         isPast,
         isPresent,
+        checkIn: dayInfo?.check_in ?? null,
+        checkOut: dayInfo?.check_out ?? null,
+        totalHours: dayInfo?.total_hours ?? null,
       });
     }
 
     return { monthName, days, year, month, isCurrentMonth };
-  }, [calendarYear, calendarMonth, attendanceHistory, isSessionActive]);
+  }, [calendarYear, calendarMonth, monthData, isSessionActive]);
 
   const attendanceMonthStats = useMemo(() => {
+    // Use server-provided counts when available for accuracy
+    if (monthData?.present_count !== undefined) {
+      const now = new Date();
+      const isCurrentMonth = calendarYear === now.getFullYear() && calendarMonth === now.getMonth();
+      const totalDays = monthData.total_days ?? new Date(calendarYear, calendarMonth + 1, 0).getDate();
+      const todayDate = now.getDate();
+      const elapsedDays = isCurrentMonth ? todayDate : totalDays;
+      const present = monthData.present_count + (isCurrentMonth && isSessionActive && !monthData.days?.some((d: any) => d.day_number === todayDate && d.status === 'PRESENT') ? 1 : 0);
+      const absent = Math.max(0, elapsedDays - present);
+      return { present, absent, total: elapsedDays };
+    }
+    // Fallback: compute from calendar grid
     const pastAndToday = calendarData.days.filter((d) => d && (d.isPast || d.isToday));
     const present = pastAndToday.filter((d) => d?.isPresent).length;
     const absent = pastAndToday.filter((d) => !d?.isPresent).length;
     return { present, absent, total: pastAndToday.length };
-  }, [calendarData]);
+  }, [calendarData, monthData, calendarYear, calendarMonth, isSessionActive]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -289,6 +327,17 @@ export default function AttendanceScreen() {
           {/* Calendar Grid 7 columns */}
           {isLoading ? (
             <ActivityIndicator size="small" color="#6B2FA0" style={{ marginVertical: 32 }} />
+          ) : isError ? (
+            <View style={styles.errorContainer}>
+              <Feather name="alert-circle" size={24} color="#EF4444" />
+              <Text style={styles.errorText}>
+                {(error as any)?.message || 'Unable to load attendance data'}
+              </Text>
+              <TouchableOpacity style={styles.retryButton} onPress={() => refetch()}>
+                <Feather name="refresh-cw" size={14} color="#fff" style={{ marginRight: 6 }} />
+                <Text style={styles.retryText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <View style={styles.gridContainer}>
               {calendarData.days.map((item, idx) => {
@@ -536,5 +585,31 @@ const styles = StyleSheet.create({
   futureText: {
     fontSize: 11,
     color: '#cbd5e1',
+  },
+  errorContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 32,
+    gap: 10,
+  },
+  errorText: {
+    fontSize: 13,
+    color: '#6b7280',
+    textAlign: 'center',
+    maxWidth: 260,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#6B2FA0',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginTop: 4,
+  },
+  retryText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

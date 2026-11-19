@@ -4,6 +4,7 @@ const STORAGE_KEY = '@skandan_api_base_url';
 
 export const CANDIDATE_HOSTS = [
   'https://employees.skandanhomecarrecclinic.com',
+  'http://192.168.1.25:8000',
   'http://192.168.1.24:8000',
   'http://192.168.1.13:8000',
   'http://192.168.29.150:8000',

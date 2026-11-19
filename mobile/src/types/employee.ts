@@ -44,10 +44,12 @@ export interface Session {
 
 export interface MonthlyAttendanceDay {
   date: string;
+  day_number: number;
+  day_name: string;
   status: 'PRESENT' | 'UNMARKED';
-  check_in_time?: string;
-  check_out_time?: string;
-  total_hours?: number;
+  check_in?: string | null;
+  check_out?: string | null;
+  total_hours?: string | null;
 }
 
 export interface Assignment {
