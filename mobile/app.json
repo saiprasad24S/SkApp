@@ -88,6 +88,12 @@
         }
       ],
       "expo-asset",
+      [
+        "expo-navigation-bar",
+        {
+          "enforceContrast": false
+        }
+      ],
       "./plugins/withNetworkSecurityConfig"
     ],
     "experiments": {
