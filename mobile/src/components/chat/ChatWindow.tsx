@@ -359,7 +359,8 @@ export default function ChatWindow({ conversation, onBack }: ChatWindowProps) {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
     >
       {/* Top Chat Header */}
       <View style={styles.header}>
