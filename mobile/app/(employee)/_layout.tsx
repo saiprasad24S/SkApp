@@ -73,7 +73,7 @@ function PortalBottomNav({ state, descriptors, navigation }: any) {
     }
 
     return (
-      <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 6) }]}>
+      <View style={[styles.bottomNav, { height: Platform.OS === 'ios' ? 84 : 64 + insets.bottom, paddingBottom: Platform.OS === 'ios' ? Math.max(insets.bottom, 6) : insets.bottom,}, ]}>
         {chatNavButtons.map((btn) => (
           <TouchableOpacity
             key={btn.key}
@@ -152,7 +152,7 @@ function PortalBottomNav({ state, descriptors, navigation }: any) {
   ];
 
   return (
-    <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 6) }]}>
+    <View style={[styles.bottomNav, { height: Platform.OS === 'ios' ? 84 : 64 + insets.bottom, paddingBottom: Platform.OS === 'ios' ? Math.max(insets.bottom, 6) : insets.bottom,}, ]}>
       {employeeNavButtons.map((btn) => (
         <TouchableOpacity
           key={btn.route}

@@ -42,7 +42,7 @@ export default function ChatScreen() {
   }, [activeConversation, chatSectionTab, setChatSectionTab]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {activeConversation ? (
         <ChatWindow
           conversation={activeConversation}
