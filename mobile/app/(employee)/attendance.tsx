@@ -129,6 +129,8 @@ export default function AttendanceScreen() {
     });
   }, []);
 
+  const targetEmployeeId = profile?.id ?? profile?.employee_id;
+
   // Use the efficient month-based API endpoint instead of fetching all records
   const {
     data: monthData,
@@ -137,19 +139,19 @@ export default function AttendanceScreen() {
     error,
     refetch,
   } = useQuery({
-    queryKey: ['employee-month-attendance', profile?.id, calendarYear, calendarMonth + 1],
+    queryKey: ['employee-month-attendance', targetEmployeeId, calendarYear, calendarMonth + 1],
     queryFn: async () => {
       const token = await getToken();
       if (!token) throw new Error('Authentication required');
-      if (!profile?.id) throw new Error('Profile not loaded');
+      if (!targetEmployeeId) throw new Error('Profile not loaded');
       return getMonthlyAttendance(
-        profile.id,
+        targetEmployeeId,
         calendarYear,
         calendarMonth + 1, // API uses 1-based months
         token
       );
     },
-    enabled: !!profile?.id,
+    enabled: !!targetEmployeeId,
     staleTime: 1000 * 60 * 2,
     retry: 3,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),

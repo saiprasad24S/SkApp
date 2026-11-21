@@ -49,7 +49,7 @@ export default function NetworkBanner() {
         style={styles.webBanner}
         onPress={() => {
           if (typeof window !== 'undefined') {
-            window.location.href = 'http://192.168.1.104:5173/';
+            window.location.href = 'https://employees.skandanhomecarrecclinic.com/';
           }
         }}
       >

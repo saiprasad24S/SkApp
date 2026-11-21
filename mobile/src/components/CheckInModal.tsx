@@ -15,6 +15,16 @@ import { useAuth } from '@clerk/clerk-expo';
 import { checkIn, checkOut } from '../api/attendanceApi';
 import { useAuthStore } from '../store/authStore';
 import { Assignment } from '../types/employee';
+import {
+  startBackgroundTracking,
+  stopBackgroundTracking,
+  hasAcknowledgedDisclosure,
+  acknowledgeDisclosure,
+  requestLocationPermissions,
+  getPermissionStatus,
+} from '../services/BackgroundLocationService';
+import { storeTokenForBackground } from '../services/LocationUploadService';
+import LocationDisclosureModal from './LocationDisclosureModal';
 
 const { width } = Dimensions.get('window');
 const OVAL_WIDTH = width * 0.75;
@@ -46,6 +56,7 @@ export default function CheckInModal({
 
   const [capturedPhotoUri, setCapturedPhotoUri] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showDisclosure, setShowDisclosure] = useState(false);
   const cameraRef = useRef<any>(null);
 
   useEffect(() => {
@@ -117,10 +128,47 @@ export default function CheckInModal({
       };
 
       if (mode === 'CHECK_IN') {
-        await checkIn(payload, token);
+        const response = await checkIn(payload, token);
         setSessionActive(true);
+
+        // Start background location tracking
+        const sessionId = response.session_id;
+        const employeeId = useAuthStore.getState().employeeId;
+        if (sessionId && employeeId) {
+          try {
+            // Store token for background uploads
+            await storeTokenForBackground(token);
+
+            // Check disclosure and permissions
+            const disclosed = await hasAcknowledgedDisclosure();
+            const perms = await getPermissionStatus();
+
+            if (!disclosed || !perms.background) {
+              // Show disclosure on next render (after modal closes)
+              // For now, try to start with foreground tracking
+              // The home screen will show the disclosure if needed
+              if (perms.foreground) {
+                // Start tracking — it may only have foreground scope
+                await startBackgroundTracking(sessionId, employeeId);
+              }
+            } else {
+              await startBackgroundTracking(sessionId, employeeId);
+            }
+          } catch (trackErr) {
+            console.warn('[CheckIn] Background tracking start failed:', trackErr);
+            // Non-fatal — attendance is recorded, tracking will be retried
+          }
+        }
+
         Alert.alert('Check-In Successful', 'Your duty session has started.');
       } else {
+        // Stop background tracking before checkout
+        try {
+          await stopBackgroundTracking();
+        } catch (stopErr) {
+          console.warn('[CheckOut] Background tracking stop failed:', stopErr);
+        }
+
         await checkOut(payload, token);
         setSessionActive(false);
         Alert.alert('Check-Out Successful', 'Your duty session has been completed.');
@@ -141,6 +189,24 @@ export default function CheckInModal({
   if (!visible) return null;
 
   return (
+    <>
+    <LocationDisclosureModal
+      visible={showDisclosure}
+      onAccept={async () => {
+        await acknowledgeDisclosure();
+        const perms = await requestLocationPermissions();
+        setShowDisclosure(false);
+        if (!perms.background) {
+          Alert.alert(
+            'Permission Needed',
+            'Background location permission was not granted. Location tracking during duty will be limited. You can enable it in device Settings > Apps > SkandanHomecarre > Permissions > Location > Allow all the time.'
+          );
+        }
+      }}
+      onDecline={() => {
+        setShowDisclosure(false);
+      }}
+    />
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.container}>
         {/* Top Header */}
@@ -240,6 +306,7 @@ export default function CheckInModal({
         )}
       </View>
     </Modal>
+    </>
   );
 }
 

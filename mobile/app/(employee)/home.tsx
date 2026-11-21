@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Platform,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -17,12 +18,14 @@ import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { getTodayAssignment } from '../../src/api/employeeApi';
 import { getNotifications } from '../../src/api/notificationApi';
-import { loginToBackend } from '../../src/lib/auth';
+import { loginToBackend, logoutFromBackend } from '../../src/lib/auth';
 import { autoDetectServer } from '../../src/lib/api';
 import CheckInModal from '../../src/components/CheckInModal';
 import NotificationSheet from '../../src/components/NotificationSheet';
 import { useLocationTracker } from '../../src/hooks/useLocationTracker';
+import { useBackgroundTracking } from '../../src/hooks/useBackgroundTracking';
 import * as Location from 'expo-location';
+import LocationDisclosureModal from '../../src/components/LocationDisclosureModal';
 import GradientAvatar from '../../src/components/common/GradientAvatar';
 
 const DigitalClockCard = memo(function DigitalClockCard() {
@@ -101,9 +104,28 @@ export default function HomeScreen() {
 
   const cachedProfile = useAuthStore((state) => state.profile);
   const setAuth = useAuthStore((state) => state.setAuth);
+  const clearAuth = useAuthStore((state) => state.clear);
 
-  // Background GPS tracker when session is active
+  const handleLogout = async () => {
+    try {
+      const token = await getToken();
+      if (token) {
+        await logoutFromBackend(token);
+      }
+    } catch (err) {
+      console.error('Backend logout failed', err);
+    } finally {
+      await signOut();
+      clearAuth();
+    }
+  };
+
+  // Background GPS tracker when session is active (foreground supplement)
   useLocationTracker();
+
+  // Background tracking state
+  const bgTracking = useBackgroundTracking();
+  const [showDisclosureModal, setShowDisclosureModal] = useState(false);
 
   const [modalVisible, setModalVisible] = useState(false);
   const [notificationVisible, setNotificationVisible] = useState(false);
@@ -245,7 +267,7 @@ export default function HomeScreen() {
           {/* Log Out Button */}
           <TouchableOpacity
             style={styles.logoutButton}
-            onPress={() => signOut()}
+            onPress={handleLogout}
             activeOpacity={0.7}
           >
             <Text style={styles.logoutText}>Log Out</Text>
@@ -361,6 +383,35 @@ export default function HomeScreen() {
             </View>
           )}
 
+          {/* Background Tracking Status */}
+          {isSessionActive && (
+            <View style={styles.trackingStatusBanner}>
+              <Feather
+                name={bgTracking.isTracking ? 'navigation' : 'alert-triangle'}
+                size={14}
+                color={bgTracking.isTracking ? '#10B981' : '#F59E0B'}
+              />
+              <Text style={[
+                styles.trackingStatusText,
+                { color: bgTracking.isTracking ? '#065F46' : '#92400E' }
+              ]}>
+                {bgTracking.isTracking
+                  ? `📍 Location tracking active${bgTracking.pendingCount > 0 ? ` · ${bgTracking.pendingCount} pending upload` : ''}`
+                  : !bgTracking.hasBackgroundPermission
+                    ? '⚠️ Background location permission needed'
+                    : '⚠️ Location tracking not active'}
+              </Text>
+              {!bgTracking.hasBackgroundPermission && isSessionActive && (
+                <TouchableOpacity
+                  onPress={() => setShowDisclosureModal(true)}
+                  style={styles.enableTrackingBtn}
+                >
+                  <Text style={styles.enableTrackingText}>Enable</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
           {/* Punch Button */}
           <TouchableOpacity
             style={[
@@ -404,6 +455,32 @@ export default function HomeScreen() {
       <NotificationSheet
         visible={notificationVisible}
         onClose={() => setNotificationVisible(false)}
+      />
+
+      {/* Location Disclosure Modal */}
+      <LocationDisclosureModal
+        visible={showDisclosureModal}
+        onAccept={async () => {
+          const perms = await bgTracking.handleDisclosureAccept();
+          setShowDisclosureModal(false);
+          if (!perms.background) {
+            Alert.alert(
+              'Permission Needed',
+              'Background location was not granted. Go to Settings > Apps > SkandanHomecarre > Permissions > Location > Allow all the time.'
+            );
+          } else {
+            // If session is active, start tracking now
+            const sessionId = activeSession?.session_id as number | undefined;
+            const empId = useAuthStore.getState().employeeId;
+            if (isSessionActive && sessionId && empId) {
+              const token = await getToken();
+              if (token) {
+                bgTracking.startTracking(sessionId, empId, token);
+              }
+            }
+          }
+        }}
+        onDecline={() => setShowDisclosureModal(false)}
       />
     </SafeAreaView>
   );
@@ -699,6 +776,34 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '700',
+  },
+  trackingStatusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.15)',
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 14,
+    gap: 8,
+  },
+  trackingStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 16,
+  },
+  enableTrackingBtn: {
+    backgroundColor: '#6B2FA0',
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+  },
+  enableTrackingText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '600',
   },
   clockCard: {
     backgroundColor: '#ffffff',

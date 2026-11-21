@@ -14,6 +14,12 @@ import NetworkBanner from '../src/components/NetworkBanner';
 import { registerForPushNotificationsAsync, setupPushTokenListener } from '../src/lib/notifications';
 import { registerTokenProvider } from '../src/lib/api';
 
+// IMPORTANT: Import BackgroundLocationService at module scope to register
+// the TaskManager.defineTask() BEFORE any background task can fire.
+import '../src/services/BackgroundLocationService';
+import { reconcileTrackingState } from '../src/services/BackgroundLocationService';
+import { storeTokenForBackground } from '../src/services/LocationUploadService';
+
 // DO NOT call SplashScreen.preventAutoHideAsync()!
 // Allowing standard Expo splash lifecycle ensures native Android automatically
 // dismisses the splash screen as soon as the first React Native view is drawn.
@@ -126,6 +132,25 @@ function InitialLayout() {
         if (isMounted) {
           console.log('[Startup] Backend sync success, employee ID:', response.employee?.id);
           setAuth(response);
+
+          // Reconcile background location tracking with backend session state
+          const isActive = !!(
+            response.active_session ||
+            response.session_summary?.active_session
+          );
+          const sessionId = response.session_summary?.session_id as number | undefined;
+          const empId = response.employee?.employee_id;
+          if (empId) {
+            // Store token for background uploads
+            storeTokenForBackground(token).catch(() => {});
+            reconcileTrackingState(
+              isActive,
+              sessionId,
+              empId
+            ).catch((err: any) =>
+              console.warn('[Startup] Tracking reconcile failed:', err)
+            );
+          }
 
           // Non-blocking push token registration
           registerForPushNotificationsAsync(token, response.employee?.id).catch(() => {});

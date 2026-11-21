@@ -2,15 +2,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORAGE_KEY = '@skandan_api_base_url';
 
-export const CANDIDATE_HOSTS = [
-  'https://employees.skandanhomecarrecclinic.com',
-  'http://192.168.1.25:8000',
-  'http://192.168.1.24:8000',
-  'http://192.168.1.13:8000',
-  'http://192.168.29.150:8000',
-  'http://10.0.2.2:8000',
-  'http://localhost:8000',
-];
+export const CANDIDATE_HOSTS = __DEV__
+  ? [
+      'https://employees.skandanhomecarrecclinic.com',
+      'http://192.168.1.25:8000',
+      'http://192.168.1.24:8000',
+      'http://192.168.1.13:8000',
+      'http://192.168.29.150:8000',
+      'http://10.0.2.2:8000',
+      'http://localhost:8000',
+    ]
+  : ['https://employees.skandanhomecarrecclinic.com'];
 
 const rawApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
 const INITIAL_BASE = rawApiBase
@@ -44,9 +46,15 @@ export async function probeHost(host: string, timeoutMs = 2500): Promise<boolean
   }
 }
 
-// Initialize from AsyncStorage safely: only switch if reachable or matches INITIAL_BASE
+// Initialize from AsyncStorage safely: in production, always stay locked to INITIAL_BASE
 AsyncStorage.getItem(STORAGE_KEY)
   .then(async (saved) => {
+    if (!__DEV__) {
+      // Production release builds must always use production domain
+      API_BASE_URL = INITIAL_BASE;
+      WS_BASE_URL = INITIAL_BASE.replace(/^http/, 'ws');
+      return;
+    }
     if (saved && saved.startsWith('http')) {
       if (saved === INITIAL_BASE) {
         API_BASE_URL = saved;

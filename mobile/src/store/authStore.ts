@@ -98,6 +98,8 @@ export const useAuthStore = create<AuthState>()(
         role: state.role,
         employeeId: state.employeeId,
         profile: state.profile,
+        isSessionActive: state.isSessionActive,
+        activeSession: state.activeSession,
       }),
     }
   )
