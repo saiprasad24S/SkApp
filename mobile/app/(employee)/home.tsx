@@ -145,21 +145,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Auto-start background tracking if session is already active
-  useEffect(() => {
-    if (isSessionActive && !bgTracking.isTracking && locationPermGranted) {
-      const sessionId = (activeSession?.session_id ?? activeSession?.id ?? 1) as number;
-      const empId = profile?.employee_id || useAuthStore.getState().employeeId || 'EMPLOYEE';
-      getToken().then((token) => {
-        if (token) {
-          bgTracking.startTracking(sessionId, empId, token).catch((e) => {
-            console.warn('[Home] Auto-start tracking failed:', e);
-          });
-        }
-      });
-    }
-  }, [isSessionActive, bgTracking.isTracking, locationPermGranted, activeSession, profile]);
-
   const requestLocationPermission = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -203,6 +188,21 @@ export default function HomeScreen() {
     : isSessionActive
     ? 'Present'
     : 'Not Marked';
+
+  // Auto-start background tracking if session is already active
+  useEffect(() => {
+    if (isSessionActive && !bgTracking.isTracking && locationPermGranted) {
+      const sessionId = (activeSession?.session_id ?? (activeSession as any)?.id ?? 1) as number;
+      const empId = profile?.employee_id || useAuthStore.getState().employeeId || 'EMPLOYEE';
+      getToken().then((token) => {
+        if (token) {
+          bgTracking.startTracking(sessionId, empId, token).catch((e) => {
+            console.warn('[Home] Auto-start tracking failed:', e);
+          });
+        }
+      });
+    }
+  }, [isSessionActive, bgTracking.isTracking, locationPermGranted, activeSession, profile]);
 
   // 2. Today's patient assignment query - only fired once profile is known
   const {
