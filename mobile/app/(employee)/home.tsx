@@ -399,14 +399,31 @@ export default function HomeScreen() {
                   ? `📍 Location tracking active${bgTracking.pendingCount > 0 ? ` · ${bgTracking.pendingCount} pending upload` : ''}`
                   : !bgTracking.hasBackgroundPermission
                     ? '⚠️ Background location permission needed'
-                    : '⚠️ Location tracking not active'}
+                    : '⚠️ Location tracking starting...'}
               </Text>
-              {!bgTracking.hasBackgroundPermission && isSessionActive && (
+              {!bgTracking.isTracking && isSessionActive && (
                 <TouchableOpacity
-                  onPress={() => setShowDisclosureModal(true)}
+                  onPress={async () => {
+                    if (!bgTracking.hasBackgroundPermission) {
+                      setShowDisclosureModal(true);
+                    } else {
+                      // Try to start tracking directly
+                      const sessionId = (activeSession?.session_id ?? activeSession?.id) as number | undefined;
+                      const empId = useAuthStore.getState().employeeId;
+                      if (sessionId && empId) {
+                        const token = await getToken();
+                        if (token) {
+                          await bgTracking.startTracking(sessionId, empId, token);
+                          bgTracking.refresh();
+                        }
+                      }
+                    }
+                  }}
                   style={styles.enableTrackingBtn}
                 >
-                  <Text style={styles.enableTrackingText}>Enable</Text>
+                  <Text style={styles.enableTrackingText}>
+                    {!bgTracking.hasBackgroundPermission ? 'Enable' : 'Start'}
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>

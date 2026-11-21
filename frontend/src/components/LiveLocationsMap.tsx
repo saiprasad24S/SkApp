@@ -2,20 +2,33 @@ import { useMemo } from 'react'
 import { MapContainer, Marker, TileLayer, Popup } from 'react-leaflet'
 import { divIcon } from 'leaflet'
 import type { LatLngExpression } from 'leaflet'
-import { MapPin } from 'lucide-react'
+import { MapPin, Navigation } from 'lucide-react'
+
+type EmployeeLocation = {
+  id: number
+  employee_id: string
+  name: string
+  email?: string
+  department?: string
+  default_address?: string
+  profile_photo?: string
+  latitude: number
+  longitude: number
+}
 
 type LiveLocationsMapProps = {
-  locations: Array<{ id: number; employee_id: string; name: string; email?: string; department?: string; default_address?: string; profile_photo?: string; latitude: number; longitude: number }>
+  locations: EmployeeLocation[]
+  onEmployeeClick?: (employee: EmployeeLocation) => void
 }
 
 const createProfileIcon = (photo: string | undefined, name: string) => divIcon({
-  html: `<div style="display:flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:999px;padding:3px;background:linear-gradient(135deg,#6B2FA0,#8B5CF6);box-shadow:0 8px 20px rgba(0,0,0,.28);overflow:hidden;"><img src="${photo || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(name) + '&background=6B2FA0&color=fff'}" alt="${name}" style="width:100%;height:100%;object-fit:cover;border-radius:999px;border:2px solid white;" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=6B2FA0&color=fff'" /></div>`,
+  html: `<div style="display:flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:999px;padding:3px;background:linear-gradient(135deg,#6B2FA0,#8B5CF6);box-shadow:0 8px 20px rgba(0,0,0,.28);overflow:hidden;cursor:pointer;"><img src="${photo || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(name) + '&background=6B2FA0&color=fff'}" alt="${name}" style="width:100%;height:100%;object-fit:cover;border-radius:999px;border:2px solid white;" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=6B2FA0&color=fff'" /></div>`,
   className: 'profile-pin-icon',
   iconSize: [54, 54],
   iconAnchor: [27, 27],
 })
 
-export function LiveLocationsMap({ locations }: LiveLocationsMapProps) {
+export function LiveLocationsMap({ locations, onEmployeeClick }: LiveLocationsMapProps) {
   const markers = useMemo(() => {
     const normalized = locations.filter((loc) => {
       const latitude = Number(loc.latitude)
@@ -44,17 +57,57 @@ export function LiveLocationsMap({ locations }: LiveLocationsMapProps) {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         {markers.map((loc) => (
-          <Marker key={loc.id} position={[loc.latitude, loc.longitude]} icon={loc.icon}>
+          <Marker key={loc.id} position={[loc.latitude, loc.longitude]} icon={loc.icon}
+            eventHandlers={onEmployeeClick ? {
+              click: () => onEmployeeClick(loc),
+            } : undefined}
+          >
             <Popup>
-              <div style={{ padding: '0.2rem', minWidth: '180px' }}>
-                <strong style={{ color: 'var(--primary)', fontSize: '0.9rem' }}>{loc.name}</strong>
-                <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.8rem', color: 'var(--muted)' }}>
-                  ID: {loc.employee_id}
-                </p>
-                {loc.email ? <p style={{ margin: '0.15rem 0 0 0', fontSize: '0.75rem', color: 'var(--muted)' }}>{loc.email}</p> : null}
-                <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+              <div style={{ padding: '0.3rem', minWidth: '200px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                  <img
+                    src={loc.profile_photo || `https://ui-avatars.com/api/?name=${encodeURIComponent(loc.name)}&background=6B2FA0&color=fff`}
+                    alt={loc.name}
+                    style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #6B2FA0' }}
+                  />
+                  <div>
+                    <strong style={{ color: '#6B2FA0', fontSize: '0.9rem' }}>{loc.name}</strong>
+                    <p style={{ margin: 0, fontSize: '0.75rem', color: '#6b7280' }}>
+                      ID: {loc.employee_id}
+                    </p>
+                  </div>
+                </div>
+                {loc.email ? <p style={{ margin: '0.15rem 0 0 0', fontSize: '0.75rem', color: '#6b7280' }}>{loc.email}</p> : null}
+                {loc.department ? <p style={{ margin: '0.1rem 0 0 0', fontSize: '0.72rem', color: '#9ca3af' }}>{loc.department}</p> : null}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.3rem', fontSize: '0.72rem', fontFamily: 'monospace', color: '#6b7280' }}>
                   <MapPin size={12} /> {loc.latitude.toFixed(5)}, {loc.longitude.toFixed(5)}
-                </span>
+                </div>
+                {onEmployeeClick && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onEmployeeClick(loc)
+                    }}
+                    style={{
+                      marginTop: '0.5rem',
+                      width: '100%',
+                      padding: '0.45rem 0.75rem',
+                      background: '#6B2FA0',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.35rem',
+                    }}
+                  >
+                    <Navigation size={13} /> View Route Track
+                  </button>
+                )}
               </div>
             </Popup>
           </Marker>

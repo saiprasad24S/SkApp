@@ -252,7 +252,13 @@ export function TrackingPage() {
               Loading operations map...
             </div>
           ) : (
-            <LiveLocationsMap locations={filteredLiveLocations} />
+            <LiveLocationsMap
+              locations={filteredLiveLocations}
+              onEmployeeClick={(emp) => {
+                setSearchVal(emp.name)
+                navigate(`/tracking/${emp.employee_id}`)
+              }}
+            />
           )}
         </div>
 

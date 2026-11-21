@@ -61,6 +61,7 @@ class AuthLoginView(APIView):
                     "active_session": active_session,
                     "session_summary": {
                         "active_session": active_session,
+                        "session_id": getattr(presence_summary.get("session"), "id", None) if presence_summary.get("session") else None,
                         "check_in_time": presence_summary.get("check_in_time"),
                         "check_out_time": presence_summary.get("check_out_time"),
                         "session_duration_seconds": presence_summary.get("session_duration_seconds"),

@@ -195,7 +195,10 @@ export function DashboardPage() {
               Loading map...
             </div>
           ) : (
-            <LiveLocationsMap locations={filteredLocations} />
+            <LiveLocationsMap
+              locations={filteredLocations}
+              onEmployeeClick={(emp) => navigate(`/tracking/${emp.employee_id}`)}
+            />
           )}
         </div>
       </div>
