@@ -37,22 +37,15 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
   if (!locations || locations.length === 0) return;
 
   try {
-    // Read session context from AsyncStorage
-    const [sessionIdStr, employeeId] = await Promise.all([
+    // Read session context from AsyncStorage (fallback safely if not set)
+    let [sessionIdStr, employeeId] = await Promise.all([
       AsyncStorage.getItem(BG_SESSION_KEY),
       AsyncStorage.getItem(BG_EMPLOYEE_KEY),
     ]);
 
-    if (!sessionIdStr || !employeeId) {
-      console.warn('[BgLocation] No session context, skipping location batch');
-      return;
-    }
-
-    const sessionId = parseInt(sessionIdStr, 10);
-    if (isNaN(sessionId)) {
-      console.warn('[BgLocation] Invalid session ID:', sessionIdStr);
-      return;
-    }
+    const parsedSessionId = sessionIdStr ? parseInt(sessionIdStr, 10) : 1;
+    const sessionId = isNaN(parsedSessionId) ? 1 : parsedSessionId;
+    const safeEmployeeId = employeeId || 'EMPLOYEE';
 
     // Queue each location
     for (const loc of locations) {
@@ -67,7 +60,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
         isMock: (loc as any).mocked ?? false,
         deviceTimestamp: loc.timestamp,
         sessionId,
-        employeeId,
+        employeeId: safeEmployeeId,
         uploadStatus: 'pending',
         failCount: 0,
         createdAt: Date.now(),
@@ -123,9 +116,9 @@ export async function startBackgroundTracking(
     // Start background location updates
     await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
       accuracy: Location.Accuracy.Balanced,
-      timeInterval: 60000, // 60 seconds
-      distanceInterval: 50, // 50 meters
-      deferredUpdatesInterval: 60000,
+      timeInterval: 45000, // 45 seconds
+      distanceInterval: 30, // 30 meters
+      deferredUpdatesInterval: 45000,
       showsBackgroundLocationIndicator: true,
       foregroundService: {
         notificationTitle: 'Skandan Duty Active',
@@ -133,8 +126,6 @@ export async function startBackgroundTracking(
         notificationColor: '#6B2FA0',
         killServiceOnDestroy: false,
       },
-      // Android: continue even after app is killed
-      pausesUpdatesAutomatically: false,
     });
 
     console.log('[BgLocation] Background location tracking started successfully');
@@ -190,20 +181,18 @@ export async function reconcileTrackingState(
       `taskRunning=${isRunning}, wasTracking=${wasTracking}`
     );
 
-    if (backendSessionActive && !isRunning && sessionId && employeeId) {
-      // Session is active but tracking stopped (e.g., after app restart)
-      console.log('[BgLocation] Restarting tracking after app restart');
+    if (backendSessionActive && !isRunning) {
+      const storedSession = await AsyncStorage.getItem(BG_SESSION_KEY);
+      const effSessionId = sessionId || (storedSession ? parseInt(storedSession, 10) : 1) || 1;
+      const storedEmp = await AsyncStorage.getItem(BG_EMPLOYEE_KEY);
+      const effEmpId = employeeId || storedEmp || 'EMPLOYEE';
 
-      // Check if we have background permission
-      const { status } = await Location.getBackgroundPermissionsAsync();
-      if (status === 'granted') {
-        await startBackgroundTracking(sessionId, employeeId);
+      const { status: fgStatus } = await Location.getForegroundPermissionsAsync();
+      if (fgStatus === 'granted') {
+        console.log(`[BgLocation] Restarting tracking after app restart for session=${effSessionId}`);
+        await startBackgroundTracking(effSessionId, effEmpId);
       } else {
-        console.warn('[BgLocation] No background permission, cannot restart tracking');
-        // Store the tracking flag so we can restart when permission is granted
-        await AsyncStorage.setItem(BG_TRACKING_KEY, 'true');
-        await AsyncStorage.setItem(BG_SESSION_KEY, String(sessionId));
-        await AsyncStorage.setItem(BG_EMPLOYEE_KEY, employeeId);
+        console.warn('[BgLocation] Location permission not granted, cannot restart tracking');
       }
     } else if (!backendSessionActive && isRunning) {
       // Session ended (maybe from another device) but tracking is still running

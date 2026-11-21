@@ -145,6 +145,21 @@ export default function HomeScreen() {
     }
   };
 
+  // Auto-start background tracking if session is already active
+  useEffect(() => {
+    if (isSessionActive && !bgTracking.isTracking && locationPermGranted) {
+      const sessionId = (activeSession?.session_id ?? activeSession?.id ?? 1) as number;
+      const empId = profile?.employee_id || useAuthStore.getState().employeeId || 'EMPLOYEE';
+      getToken().then((token) => {
+        if (token) {
+          bgTracking.startTracking(sessionId, empId, token).catch((e) => {
+            console.warn('[Home] Auto-start tracking failed:', e);
+          });
+        }
+      });
+    }
+  }, [isSessionActive, bgTracking.isTracking, locationPermGranted, activeSession, profile]);
+
   const requestLocationPermission = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -407,15 +422,12 @@ export default function HomeScreen() {
                     if (!bgTracking.hasBackgroundPermission) {
                       setShowDisclosureModal(true);
                     } else {
-                      // Try to start tracking directly
-                      const sessionId = (activeSession?.session_id ?? activeSession?.id) as number | undefined;
-                      const empId = useAuthStore.getState().employeeId;
-                      if (sessionId && empId) {
-                        const token = await getToken();
-                        if (token) {
-                          await bgTracking.startTracking(sessionId, empId, token);
-                          bgTracking.refresh();
-                        }
+                      const sessionId = (activeSession?.session_id ?? activeSession?.id ?? 1) as number;
+                      const empId = profile?.employee_id || useAuthStore.getState().employeeId || 'EMPLOYEE';
+                      const token = await getToken();
+                      if (token) {
+                        await bgTracking.startTracking(sessionId, empId, token);
+                        bgTracking.refresh();
                       }
                     }
                   }}

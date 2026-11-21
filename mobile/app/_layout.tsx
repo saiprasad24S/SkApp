@@ -92,7 +92,11 @@ function InitialLayout() {
   useEffect(() => {
     registerTokenProvider(async (skipCache = false) => {
       try {
-        return await getToken(skipCache ? ({ skipCache: true } as any) : undefined);
+        const token = await getToken(skipCache ? ({ skipCache: true } as any) : undefined);
+        if (token) {
+          storeTokenForBackground(token).catch(() => {});
+        }
+        return token;
       } catch {
         return null;
       }

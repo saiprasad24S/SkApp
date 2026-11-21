@@ -87,16 +87,21 @@ export function TrackingPage() {
     ) ?? null
   }, [urlEmployeeId, employees])
 
-  // Fetch route details if an employee is selected
+  const targetEmployeeId = urlEmployeeId || selectedEmployee?.employee_id || (selectedEmployee ? String(selectedEmployee.id) : null)
+
+  // Fetch route details if an employee is selected or present in URL
   const routeQuery = useQuery({
-    queryKey: ['route-tracking', selectedEmployee?.id],
-    enabled: !!selectedEmployee,
+    queryKey: ['route-tracking', targetEmployeeId],
+    enabled: !!targetEmployeeId,
     queryFn: async () => {
       const token = await getToken()
-      if (!token || !selectedEmployee) throw new Error('Missing credentials')
-      const response = await authedFetch(`/api/location/employee/route/${selectedEmployee.id}`, token)
+      if (!token || !targetEmployeeId) throw new Error('Missing credentials')
+      const response = await authedFetch(`/api/location/employee/route/${targetEmployeeId}`, token)
       if (!response.ok) throw new Error('Unable to load route')
       return response.json() as Promise<{
+        employee_id: string
+        employee_name: string
+        date: string
         route: RoutePoint[]
         distance_covered_meters: number
         presence_status: string
@@ -105,11 +110,42 @@ export function TrackingPage() {
         session_duration_seconds: number | null
       }>
     },
-    refetchInterval: selectedEmployee?.id ? 15_000 : undefined,
+    refetchInterval: targetEmployeeId ? 15_000 : undefined,
     staleTime: 10_000,
     refetchOnWindowFocus: false,
     placeholderData: (previousData) => previousData,
   })
+
+  const effectiveEmployee = useMemo(() => {
+    if (selectedEmployee) return selectedEmployee
+    if (!urlEmployeeId) return null
+    const fromLive = liveLocations.find((l) => l.employee_id === urlEmployeeId || String(l.id) === urlEmployeeId)
+    if (fromLive) {
+      return {
+        id: fromLive.id,
+        employee_id: fromLive.employee_id,
+        name: fromLive.name,
+        email: fromLive.email || '',
+        department: fromLive.department || '',
+        designation: 'Healthcare Professional',
+        profile_photo: fromLive.profile_photo || '',
+        is_active: true,
+      }
+    }
+    if (routeQuery.data) {
+      return {
+        id: 0,
+        employee_id: routeQuery.data.employee_id,
+        name: routeQuery.data.employee_name,
+        email: '',
+        department: 'Operations',
+        designation: 'Field Employee',
+        profile_photo: '',
+        is_active: routeQuery.data.is_present,
+      }
+    }
+    return null
+  }, [selectedEmployee, urlEmployeeId, liveLocations, routeQuery.data])
 
   // Filter present employees list for default map view
   const filteredLiveLocations = useMemo(() => {
@@ -151,7 +187,7 @@ export function TrackingPage() {
             <h3>Live Operations Tracking</h3>
             <p>View real-time coordinates of present workforce or search an employee to trace their route history.</p>
           </div>
-          {selectedEmployee && (
+          {effectiveEmployee && (
             <button
               className="btn-secondary"
               onClick={() => {
@@ -228,10 +264,10 @@ export function TrackingPage() {
         </div>
       </div>
 
-      <div className={`tracking-layout ${selectedEmployee ? 'has-sidebar' : ''}`}>
+      <div className={`tracking-layout ${effectiveEmployee ? 'has-sidebar' : ''}`}>
         {/* Map view */}
         <div className="glass-card card-soft" style={{ padding: '1rem', minHeight: '420px', display: 'flex', flexDirection: 'column' }}>
-          {selectedEmployee ? (
+          {effectiveEmployee ? (
             routeQuery.isLoading ? (
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' }}>
                 Loading employee route data...
@@ -245,7 +281,7 @@ export function TrackingPage() {
                 No tracking route points recorded for today.
               </div>
             ) : (
-              <RouteMap points={routeQuery.data?.route || []} isLive={routeQuery.data?.is_present} />
+              <RouteMap points={routeQuery.data?.route || []} isLive={routeQuery.data?.is_present} employeeName={effectiveEmployee.name} />
             )
           ) : liveLocationsQuery.isLoading ? (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' }}>
@@ -263,17 +299,17 @@ export function TrackingPage() {
         </div>
 
         {/* Selected Employee Details panel */}
-        {selectedEmployee && routeQuery.data && (
+        {effectiveEmployee && routeQuery.data && (
           <div className="glass-card card-soft stack" style={{ padding: '1.5rem', gap: '1rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '1rem' }}>
               <img
-                src={selectedEmployee.profile_photo || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(selectedEmployee.name) + '&background=6B2FA0&color=fff'}
-                alt={selectedEmployee.name}
+                src={effectiveEmployee.profile_photo || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(effectiveEmployee.name) + '&background=6B2FA0&color=fff'}
+                alt={effectiveEmployee.name}
                 style={{ width: '80px', height: '80px', borderRadius: '50%', objectFit: 'cover', marginBottom: '0.75rem', border: '3px solid var(--primary)' }}
               />
-              <h4 style={{ fontSize: '1.15rem' }}>{selectedEmployee.name}</h4>
-              <span style={{ fontSize: '0.85rem', color: 'var(--muted)', fontWeight: 600 }}>{selectedEmployee.employee_id}</span>
-              <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0.25rem 0 0 0' }}>{selectedEmployee.designation} — {selectedEmployee.department}</p>
+              <h4 style={{ fontSize: '1.15rem' }}>{effectiveEmployee.name}</h4>
+              <span style={{ fontSize: '0.85rem', color: 'var(--muted)', fontWeight: 600 }}>{effectiveEmployee.employee_id}</span>
+              <p style={{ fontSize: '0.85rem', color: 'var(--muted)', margin: '0.25rem 0 0 0' }}>{effectiveEmployee.designation} — {effectiveEmployee.department}</p>
             </div>
 
             <div className="stack" style={{ gap: '0.75rem', fontSize: '0.9rem' }}>
