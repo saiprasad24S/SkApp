@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { MapContainer, Marker, Polyline, TileLayer, Popup, useMap } from 'react-leaflet'
+import { MapContainer, Marker, Polyline, CircleMarker, TileLayer, Popup, useMap } from 'react-leaflet'
 import { divIcon, latLngBounds } from 'leaflet'
 import type { LatLngExpression } from 'leaflet'
 import { LogIn, LogOut, Radio, Clock, MapPin } from 'lucide-react'
@@ -144,6 +144,43 @@ export function RouteMap({ points, isLive = false, employeeName }: RouteMapProps
                 lineCap: 'round',
               }}
             />
+
+            {/* Intermediate tracked GPS waypoints */}
+            {points.length > 2 &&
+              points.slice(1, -1).map((pt, idx) => (
+                <CircleMarker
+                  key={`waypoint-${idx}`}
+                  center={[pt.latitude, pt.longitude]}
+                  radius={4}
+                  pathOptions={{
+                    color: '#6B2FA0',
+                    fillColor: '#FFFFFF',
+                    fillOpacity: 1,
+                    weight: 2,
+                  }}
+                >
+                  <Popup>
+                    <div style={{ padding: '0.3rem', minWidth: '160px' }}>
+                      <strong style={{ color: '#6B2FA0', fontSize: '0.85rem' }}>
+                        Waypoint #{idx + 1}
+                      </strong>
+                      {pt.timestamp && (
+                        <div style={{ fontSize: '0.75rem', color: '#4B5563', marginTop: '0.2rem' }}>
+                          Time: {formatTimestamp(pt.timestamp)}
+                        </div>
+                      )}
+                      {pt.speed != null && (
+                        <div style={{ fontSize: '0.72rem', color: '#6B7280' }}>
+                          Speed: {(pt.speed * 3.6).toFixed(1)} km/h
+                        </div>
+                      )}
+                      <div style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#9CA3AF', marginTop: '0.15rem' }}>
+                        {pt.latitude.toFixed(5)}, {pt.longitude.toFixed(5)}
+                      </div>
+                    </div>
+                  </Popup>
+                </CircleMarker>
+              ))}
 
             {/* START / LOGIN MARKER */}
             {checkInPoint && (

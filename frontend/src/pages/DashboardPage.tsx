@@ -235,10 +235,56 @@ export function DashboardPage() {
                   Loading map...
                 </div>
               ) : (
-                <LiveLocationsMap
-                  locations={filteredLocations}
-                  onEmployeeClick={(emp) => setSelectedEmployeeForRoute(emp)}
-                />
+                <>
+                  {filteredLocations.length > 0 && (
+                    <div style={{
+                      display: 'flex',
+                      gap: '0.5rem',
+                      overflowX: 'auto',
+                      paddingBottom: '0.6rem',
+                      marginBottom: '0.75rem',
+                      alignItems: 'center',
+                    }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+                        ACTIVE EMPLOYEES:
+                      </span>
+                      {filteredLocations.map((emp) => (
+                        <button
+                          key={emp.id}
+                          type="button"
+                          onClick={() => setSelectedEmployeeForRoute(emp)}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.45rem',
+                            padding: '0.35rem 0.75rem',
+                            borderRadius: '999px',
+                            border: '1px solid var(--border)',
+                            background: 'var(--panel)',
+                            fontSize: '0.8rem',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                          }}
+                        >
+                          <img
+                            src={emp.profile_photo || `https://ui-avatars.com/api/?name=${encodeURIComponent(emp.name)}&background=6B2FA0&color=fff`}
+                            alt={emp.name}
+                            style={{ width: '22px', height: '22px', borderRadius: '50%', objectFit: 'cover', border: '1.5px solid var(--primary)' }}
+                          />
+                          <span style={{ fontWeight: 600 }}>{emp.name}</span>
+                          <span style={{ color: 'var(--primary)', fontSize: '0.72rem', fontWeight: 700 }}>
+                            Trace Route →
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <LiveLocationsMap
+                    locations={filteredLocations}
+                    onEmployeeClick={(emp) => setSelectedEmployeeForRoute(emp)}
+                  />
+                </>
               )}
             </>
           ) : (
