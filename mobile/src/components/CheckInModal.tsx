@@ -63,13 +63,44 @@ export default function CheckInModal({
     if (visible) {
       setCapturedPhotoUri(null);
       setIsSubmitting(false);
-      fetchLocation();
+      if (mode === 'CHECK_IN') {
+        prepareLocationAccess();
+      } else {
+        fetchLocation(false);
+      }
     }
   }, [visible]);
 
-  const fetchLocation = async () => {
+  const prepareLocationAccess = async () => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
+      const disclosed = await hasAcknowledgedDisclosure();
+      if (!disclosed) {
+        setShowDisclosure(true);
+        return;
+      }
+      const permissions = await requestLocationPermissions();
+      setLocationPermission(permissions.foreground);
+      if (!permissions.foreground) {
+        setLocationError('Location permission is required for attendance verification.');
+        return;
+      }
+      if (!permissions.background) {
+        Alert.alert(
+          'Background Location Not Enabled',
+          'Attendance can continue with foreground location, but background duty tracking will not work until you allow location access all the time in Android Settings.'
+        );
+      }
+      await fetchLocation(false);
+    } catch (err: any) {
+      setLocationError(err.message || 'Unable to prepare location access.');
+    }
+  };
+
+  const fetchLocation = async (_requestPermissionIfNeeded = false) => {
+    try {
+      // Permission requests are centralized in prepareLocationAccess, which first
+      // requires explicit disclosure acknowledgement. This function only checks.
+      const { status } = await Location.getForegroundPermissionsAsync();
       setLocationPermission(status === 'granted');
       if (status !== 'granted') {
         setLocationError('Location permission is required for attendance verification.');
@@ -131,7 +162,8 @@ export default function CheckInModal({
         const response = await checkIn(payload, token);
         setSessionActive(true);
 
-        // Start background location tracking
+        // Start background location tracking only when disclosure and both OS
+        // permissions are already satisfied. The service enforces this centrally.
         const sessionId = response.session_id;
         const employeeId = useAuthStore.getState().employeeId;
         if (sessionId && employeeId) {
@@ -139,20 +171,11 @@ export default function CheckInModal({
             // Store token for background uploads
             await storeTokenForBackground(token);
 
-            // Check disclosure and permissions
             const disclosed = await hasAcknowledgedDisclosure();
             const perms = await getPermissionStatus();
-
-            if (!disclosed || !perms.background) {
-              // Show disclosure on next render (after modal closes)
-              // For now, try to start with foreground tracking
-              // The home screen will show the disclosure if needed
-              if (perms.foreground) {
-                // Start tracking — it may only have foreground scope
-                await startBackgroundTracking(sessionId, employeeId);
-              }
-            } else {
-              await startBackgroundTracking(sessionId, employeeId);
+            if (disclosed && perms.foreground && perms.background) {
+              const result = await startBackgroundTracking(sessionId, employeeId);
+              if (!result.success) console.warn('[CheckIn] Tracking not started:', result.error);
             }
           } catch (trackErr) {
             console.warn('[CheckIn] Background tracking start failed:', trackErr);
@@ -193,21 +216,30 @@ export default function CheckInModal({
     <LocationDisclosureModal
       visible={showDisclosure}
       onAccept={async () => {
+        // Persist explicit acknowledgement before the first OS location prompt.
         await acknowledgeDisclosure();
-        const perms = await requestLocationPermissions();
         setShowDisclosure(false);
+        const perms = await requestLocationPermissions();
+        setLocationPermission(perms.foreground);
+        if (!perms.foreground) {
+          setLocationError('Location permission is required for attendance verification.');
+          return;
+        }
         if (!perms.background) {
           Alert.alert(
             'Permission Needed',
             'Background location permission was not granted. Location tracking during duty will be limited. You can enable it in device Settings > Apps > SkandanHomecarre > Permissions > Location > Allow all the time.'
           );
         }
+        await fetchLocation(false);
       }}
       onDecline={() => {
         setShowDisclosure(false);
+        setLocationPermission(false);
+        setLocationError('Please acknowledge the location disclosure to continue with GPS attendance verification.');
       }}
     />
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible && !showDisclosure} animationType="slide" onRequestClose={onClose}>
       <View style={styles.container}>
         {/* Top Header */}
         <View style={styles.topBar}>

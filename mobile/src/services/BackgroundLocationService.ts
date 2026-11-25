@@ -22,7 +22,7 @@ export const BACKGROUND_LOCATION_TASK = 'SKAPP_BACKGROUND_LOCATION_TASK';
 const BG_SESSION_KEY = '@skapp_bg_session_id';
 const BG_EMPLOYEE_KEY = '@skapp_bg_employee_id';
 const BG_TRACKING_KEY = '@skapp_bg_tracking_active';
-const DISCLOSURE_KEY = '@skapp_location_disclosure_v1';
+const DISCLOSURE_KEY = '@skapp_location_disclosure_v2';
 
 // ─── Task Definition (Module Scope!) ──────────────────────────────────
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) => {
@@ -37,6 +37,16 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }: any) =>
   if (!locations || locations.length === 0) return;
 
   try {
+    // A previously registered task must not keep collecting after a disclosure
+    // version change or if the user has not acknowledged the current disclosure.
+    if (!(await hasAcknowledgedDisclosure())) {
+      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK).catch(() => {});
+      await AsyncStorage.multiRemove([BG_SESSION_KEY, BG_EMPLOYEE_KEY, BG_TRACKING_KEY]);
+      console.warn('[BgLocation] Task stopped because disclosure is not acknowledged');
+      return;
+    }
+
+    // Read session context (a task without valid session metadata must not record).
     // Read session context from AsyncStorage (fallback safely if not set)
     let [sessionIdStr, employeeId] = await Promise.all([
       AsyncStorage.getItem(BG_SESSION_KEY),
@@ -99,9 +109,19 @@ export async function startBackgroundTracking(
   employeeId: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    // Enforce disclosure and OS permission checks centrally so callers cannot bypass them.
+    if (!(await hasAcknowledgedDisclosure())) {
+      return { success: false, error: 'Location disclosure must be acknowledged before tracking.' };
+    }
+    const permissions = await getPermissionStatus();
+    if (!permissions.foreground || !permissions.background) {
+      if (await isTrackingActive()) await stopBackgroundTracking();
+      return { success: false, error: 'Foreground and background location permissions are required.' };
+    }
+
     console.log(`[BgLocation] Starting tracking for session=${sessionId}, employee=${employeeId}`);
 
-    // Store session context for the background task
+    // Store session context only after all disclosure and permission checks pass.
     await AsyncStorage.setItem(BG_SESSION_KEY, String(sessionId));
     await AsyncStorage.setItem(BG_EMPLOYEE_KEY, employeeId);
     await AsyncStorage.setItem(BG_TRACKING_KEY, 'true');
@@ -181,7 +201,28 @@ export async function reconcileTrackingState(
       `taskRunning=${isRunning}, wasTracking=${wasTracking}`
     );
 
+    if (isRunning) {
+      const disclosureOk = await hasAcknowledgedDisclosure();
+      const permissions = await getPermissionStatus();
+      if (!disclosureOk || !permissions.foreground || !permissions.background) {
+        console.warn('[BgLocation] Stopping task because disclosure or location permission is missing');
+        await stopBackgroundTracking();
+        return;
+      }
+    }
+
     if (backendSessionActive && !isRunning) {
+      // Never restart background collection until the current disclosure is acknowledged
+      // and Android has granted both foreground and background location access.
+      if (!(await hasAcknowledgedDisclosure())) {
+        console.warn('[BgLocation] Disclosure not acknowledged; tracking remains stopped');
+        return;
+      }
+      const permissions = await getPermissionStatus();
+      if (!permissions.foreground || !permissions.background) {
+        console.warn('[BgLocation] Required location permissions missing; tracking remains stopped');
+        return;
+      }
       const storedSession = await AsyncStorage.getItem(BG_SESSION_KEY);
       const effSessionId = sessionId || (storedSession ? parseInt(storedSession, 10) : 1) || 1;
       const storedEmp = await AsyncStorage.getItem(BG_EMPLOYEE_KEY);
@@ -224,6 +265,12 @@ export async function requestLocationPermissions(): Promise<{
   foreground: boolean;
   background: boolean;
 }> {
+  // This guard is intentionally here as well as in the UI: no caller may show
+  // an Android location permission prompt before the prominent disclosure.
+  if (!(await hasAcknowledgedDisclosure())) {
+    return { foreground: false, background: false };
+  }
+
   // Request foreground first (required before background on Android)
   const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
   if (fgStatus !== 'granted') {

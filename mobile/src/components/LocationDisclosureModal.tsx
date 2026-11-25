@@ -14,11 +14,8 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  Dimensions,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-
-const { width } = Dimensions.get('window');
 
 interface LocationDisclosureModalProps {
   visible: boolean;
@@ -98,9 +95,8 @@ export default function LocationDisclosureModal({
               <Text style={styles.sectionTitle}>Offline Storage</Text>
             </View>
             <Text style={styles.sectionText}>
-              If your phone loses internet connection, location data is stored
-              securely on your device and automatically uploaded when connectivity
-              returns.
+              If your phone loses internet connection, location data is stored on your
+              device and uploaded when connectivity returns.
             </Text>
           </View>
 
@@ -110,17 +106,19 @@ export default function LocationDisclosureModal({
               <Text style={styles.sectionTitle}>Your Privacy</Text>
             </View>
             <Text style={styles.sectionText}>
-              Location data is used solely for duty tracking and attendance
-              verification. It is accessible only to authorized administrators.
-              You can check out at any time to stop tracking immediately.
+              Location data is used for duty tracking and attendance verification and is
+              available to authorized administrators. Tracking stops after a
+              successful check-out. Android battery restrictions or a force-stop
+              from device Settings may interrupt background tracking.
             </Text>
           </View>
 
           <View style={styles.highlightBox}>
             <Feather name="bell" size={16} color="#6B2FA0" />
             <Text style={styles.highlightText}>
-              A persistent notification will appear while tracking is active,
-              so you always know when your location is being recorded.
+              Tapping Continue only acknowledges this explanation. Android will
+              ask separately for location permission; you can decline that request.
+              A persistent notification appears while background tracking is active.
             </Text>
           </View>
         </ScrollView>

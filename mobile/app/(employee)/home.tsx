@@ -26,6 +26,7 @@ import { useLocationTracker } from '../../src/hooks/useLocationTracker';
 import { useBackgroundTracking } from '../../src/hooks/useBackgroundTracking';
 import * as Location from 'expo-location';
 import LocationDisclosureModal from '../../src/components/LocationDisclosureModal';
+import { hasAcknowledgedDisclosure } from '../../src/services/BackgroundLocationService';
 import GradientAvatar from '../../src/components/common/GradientAvatar';
 
 const DigitalClockCard = memo(function DigitalClockCard() {
@@ -145,11 +146,20 @@ export default function HomeScreen() {
     }
   };
 
+  // Never show an Android location permission prompt until the employee has
+  // explicitly acknowledged the prominent location disclosure.
   const requestLocationPermission = async () => {
     try {
+      const acknowledged = await hasAcknowledgedDisclosure();
+      if (!acknowledged) {
+        setShowDisclosureModal(true);
+        return;
+      }
+
       const { status } = await Location.requestForegroundPermissionsAsync();
       setLocationPermGranted(status === 'granted');
-    } catch {
+    } catch (error) {
+      console.warn('[Home] Location permission request failed:', error);
       setLocationPermGranted(false);
     }
   };
@@ -183,6 +193,18 @@ export default function HomeScreen() {
     useAuthStore.getState().isSessionActive
   );
   const activeSession = authData?.session_summary || useAuthStore.getState().activeSession;
+
+  // Existing installations may already have OS permission but no disclosure acknowledgement.
+  // Show the disclosure before attempting to resume any active-duty tracking.
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const acknowledged = await hasAcknowledgedDisclosure();
+      if (mounted && isSessionActive && !acknowledged) setShowDisclosureModal(true);
+    })().catch((error) => console.warn('[Home] Disclosure check failed:', error));
+    return () => { mounted = false; };
+  }, [isSessionActive]);
+
   const sessionStatus: string = typeof authData?.session_summary?.status === 'string'
     ? authData.session_summary.status
     : isSessionActive
@@ -191,7 +213,7 @@ export default function HomeScreen() {
 
   // Auto-start background tracking if session is already active
   useEffect(() => {
-    if (isSessionActive && !bgTracking.isTracking && locationPermGranted) {
+    if (isSessionActive && !bgTracking.isTracking && locationPermGranted && bgTracking.disclosureAcknowledged && bgTracking.hasBackgroundPermission) {
       const sessionId = (activeSession?.session_id ?? (activeSession as any)?.id ?? 1) as number;
       const empId = profile?.employee_id || useAuthStore.getState().employeeId || 'EMPLOYEE';
       getToken().then((token) => {
@@ -202,7 +224,7 @@ export default function HomeScreen() {
         }
       });
     }
-  }, [isSessionActive, bgTracking.isTracking, locationPermGranted, activeSession, profile]);
+  }, [isSessionActive, bgTracking.isTracking, bgTracking.disclosureAcknowledged, bgTracking.hasBackgroundPermission, locationPermGranted, activeSession, profile]);
 
   // 2. Today's patient assignment query - only fired once profile is known
   const {

@@ -3,6 +3,7 @@ import * as Location from 'expo-location';
 import { useAuth } from '@clerk/clerk-expo';
 import { useAuthStore } from '../store/authStore';
 import { sendLocationPing } from '../api/locationApi';
+import { hasAcknowledgedDisclosure } from '../services/BackgroundLocationService';
 
 export function useLocationTracker() {
   const { getToken } = useAuth();
@@ -22,7 +23,10 @@ export function useLocationTracker() {
       }
 
       try {
-        const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+        // This legacy foreground watcher must never trigger a permission prompt itself.
+        // The prominent disclosure and permission sequence is handled by CheckInModal.
+        if (!(await hasAcknowledgedDisclosure())) return;
+        const { status: fgStatus } = await Location.getForegroundPermissionsAsync();
         if (fgStatus !== 'granted') return;
 
         const sub = await Location.watchPositionAsync(
